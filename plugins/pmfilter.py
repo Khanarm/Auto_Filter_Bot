@@ -876,91 +876,44 @@ async def cb_handler(client: Client, query: CallbackQuery):
         await query.answer("ᴛʜɪs ɪs ᴘᴀɢᴇs ʙᴜᴛᴛᴏɴ 😅")
     
     elif query.data.startswith("sendfiles"):
-       ident, key = query.data.split("#")
-            settings = await get_settings(query.message.chat.id)
+        ident, key = query.data.split("#")
+        settings = await get_settings(query.message.chat.id)
 
-    try:
         original_url = (
             f"https://telegram.me/{temp.U_NAME}"
             f"?start=allfiles_{query.message.chat.id}_{key}"
         )
 
-        short_url = await get_shortlink(
-            original_url,
-            query.message.chat.id
-        )
+        try:
+            short_url = await get_shortlink(
+                original_url,
+                query.message.chat.id
+            )
+        except Exception as e:
+            logger.exception(f"SEND ALL shortener error: {e}")
+            short_url = original_url
 
-        await query.answer(url=short_url)
-        return
-
-    except UserIsBlocked:
-        await query.answer(
-            "Uɴʙʟᴏᴄᴋ ᴛʜᴇ ʙᴏᴛ ᴍᴀʜɴ !",
-            show_alert=True
-        )
-
-    except PeerIdInvalid:
-        await query.answer(url=original_url)
-
-    except Exception as e:
-        logger.exception(e)
-        await query.answer(url=original_url)
-
-    # -------------------------------------------------
-    # Shorten with aShort.in
-    # -------------------------------------------------
-
-    try:
-        short_url = await get_shortlink(
-            original_url,
-            query.message.chat.id
-        )
-
-    except Exception as e:
-        logger.exception(
-            f"SEND ALL shortener error: {e}"
-        )
-        short_url = original_url
-
-    # -------------------------------------------------
-    # Open shortened URL
-    # -------------------------------------------------
-
-    try:
-        await query.answer(
-            url=short_url
-        )
-        return
-
-    except UserIsBlocked:
-        await query.answer(
-            "Uɴʙʟᴏᴄᴋ ᴛʜᴇ ʙᴏᴛ ᴍᴀʜɴ !",
-            show_alert=True
-        )
-
-    except PeerIdInvalid:
-        fallback_url = (
-            f"https://t.me/{temp.U_NAME}"
-            f"?start=sendfiles3_{key}"
-        )
-
-        await query.answer(
-            url=fallback_url
-        )
-
-    except Exception as e:
-        logger.exception(
-            f"SEND ALL callback error: {e}"
-        )
-
-        fallback_url = (
-            f"https://t.me/{temp.U_NAME}"
-            f"?start=sendfiles4_{key}"
-        )
-
-        await query.answer(
-            url=fallback_url
-        )
+        try:
+            await query.answer(url=short_url)
+            return
+        except UserIsBlocked:
+            await query.answer(
+                "Uɴʙʟᴏᴄᴋ ᴛʜᴇ ʙᴏᴛ ᴍᴀʜɴ !",
+                show_alert=True
+            )
+        except PeerIdInvalid:
+            fallback_url = (
+                f"https://t.me/{temp.U_NAME}"
+                f"?start=sendfiles3_{key}"
+            )
+            await query.answer(url=fallback_url)
+        except Exception as e:
+            logger.exception(f"SEND ALL callback error: {e}")
+            fallback_url = (
+                f"https://t.me/{temp.U_NAME}"
+                f"?start=sendfiles4_{key}"
+            )
+            await query.answer(url=fallback_url)
 
 
 
