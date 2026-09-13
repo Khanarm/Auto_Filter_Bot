@@ -1102,3 +1102,90 @@ async def get_cap(settings, remaining_seconds, files, query, total_results, sear
     except Exception as e:
         logger.error(f"Error in get_cap: {e}")
         pass
+
+# ============================================================
+# PM FILTER HELPERS
+# ============================================================
+
+def extract_request_content(text: str) -> str:
+    """
+    Extract the actual movie/show request from bot-generated text.
+    """
+    if not text:
+        return "Unknown Request"
+
+    text = str(text).strip()
+
+    # Remove HTML tags
+    text = re.sub(r"<[^>]+>", " ", text)
+
+    # Decode common HTML entities
+    text = (
+        text.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+    )
+
+    # Normalize whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # Remove common request/title prefixes
+    patterns = [
+        r"^request\s*:\s*",
+        r"^title\s*:\s*",
+        r"^search\s*:\s*",
+        r"^query\s*:\s*",
+        r"^ᴛɪᴛʟᴇ\s*:\s*",
+        r"^ʀᴇǫᴜᴇsᴛ\s*:\s*",
+    ]
+
+    for pattern in patterns:
+        cleaned = re.sub(
+            pattern,
+            "",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+        if cleaned != text:
+            text = cleaned.strip()
+            break
+
+    return text or "Unknown Request"
+
+
+def clean_filename(filename: str) -> str:
+    """
+    Clean Telegram file names for display in buttons/captions.
+    """
+    if not filename:
+        return "Unknown File"
+
+    filename = str(filename).strip()
+
+    # Remove file extension
+    filename = re.sub(
+        r"\.(mkv|mp4|avi|mov|webm|flv|wmv|m4v|ts|3gp)$",
+        "",
+        filename,
+        flags=re.IGNORECASE,
+    )
+
+    # Replace common separators with spaces
+    filename = re.sub(r"[_\.]+", " ", filename)
+
+    # Remove Telegram-style usernames/links
+    filename = re.sub(
+        r"@\w+",
+        "",
+        filename,
+        flags=re.IGNORECASE,
+    )
+
+    # Normalize spaces
+    filename = re.sub(r"\s+", " ", filename).strip()
+
+    return filename or "Unknown File"
