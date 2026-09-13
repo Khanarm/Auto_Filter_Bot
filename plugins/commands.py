@@ -45,13 +45,23 @@ async def start(client, message):
                 pass
         m = message
         if len(m.command) == 2 and m.command[1].startswith(('notcopy', 'sendall')):
-            _, userid, verify_id, file_id = m.command[1].split("_", 3)
+            # New verification links carry the group id in the token itself.
+            # This avoids relying on temp.VERIFICATIONS, which is only in-memory
+            # and can be lost/overwritten when users request multiple files.
+            parts = m.command[1].split("_", 4)
+            if len(parts) == 5:
+                _, userid, verify_id, grp_id, file_id = parts
+            else:
+                # Backward compatibility for old shortener links.
+                _, userid, verify_id, file_id = m.command[1].split("_", 3)
+                grp_id = temp.VERIFICATIONS.get(int(userid), 0)
+
             user_id = int(userid)
-            grp_id = temp.VERIFICATIONS.get(user_id, 0)
-            settings = await get_settings(grp_id)         
+            grp_id = int(grp_id)
+            settings = await get_settings(grp_id)
             verify_id_info = await db.get_verify_id_info(user_id, verify_id)
-            if not verify_id_info or verify_id_info["verified"]:
-                return await message.reply(script.LINK_EXPIRED_TXT)  
+            if not verify_id_info or verify_id_info.get("verified"):
+                return await message.reply(script.LINK_EXPIRED_TXT)
 
             ist_timezone = pytz.timezone('Asia/Kolkata')
             if await db.user_verified(user_id):
@@ -59,45 +69,39 @@ async def start(client, message):
             else:
                 key = "second_time_verified" if await db.is_user_verified(user_id) else "last_verified"
             current_time = datetime.now(tz=ist_timezone)
-            await db.update_notcopy_user(user_id, {key:current_time})
-            await db.update_verify_id_info(user_id, verify_id, {"verified":True})
-            if key == "third_time_verified": 
-                num = 3 
-            else: 
-                num =  2 if key == "second_time_verified" else 1 
-            if key == "third_time_verified": 
+            await db.update_notcopy_user(user_id, {key: current_time})
+            await db.update_verify_id_info(user_id, verify_id, {"verified": True})
+
+            if key == "third_time_verified":
+                num = 3
                 msg = script.THIRDT_VERIFY_COMPLETE_TEXT
             else:
+                num = 2 if key == "second_time_verified" else 1
                 msg = script.SECOND_VERIFY_COMPLETE_TEXT if key == "second_time_verified" else script.VERIFY_COMPLETE_TEXT
-            # The link shown after successful shortener verification is a
-            # protected direct-file link.  It carries the verification ID so
-            # it can bypass the shortener ONLY after that exact verification
-            # record has been marked verified.
-            if message.command[1].startswith('sendall'):
-                verifiedfiles = (
-                    f"https://telegram.me/{temp.U_NAME}?start="
-                    f"verifiedall_{user_id}_{verify_id}_{grp_id}_{file_id}"
+
+            await client.send_message(
+                settings['log'],
+                script.VERIFIED_LOG_TEXT.format(
+                    m.from_user.mention,
+                    user_id,
+                    datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d %B %Y'),
+                    num
                 )
-            else:
-                verifiedfiles = (
-                    f"https://telegram.me/{temp.U_NAME}?start="
-                    f"verified_{user_id}_{verify_id}_{grp_id}_{file_id}"
-                )
-            await client.send_message(settings['log'], script.VERIFIED_LOG_TEXT.format(m.from_user.mention, user_id, datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d %B %Y'), num))
-            btn = [[
-                InlineKeyboardButton("✅ ᴄʟɪᴄᴋ ʜᴇʀᴇ ᴛᴏ ɢᴇᴛ ꜰɪʟᴇ ✅", url=verifiedfiles),
-            ]]
-            reply_markup=InlineKeyboardMarkup(btn)
-            dlt=await m.reply_photo(
-                photo=(VERIFY_IMG),
+            )
+
+            # Verification is complete. Show the completion message and then
+            # continue through the normal delivery code below so the requested
+            # file is sent automatically. No second "Get File" click is needed.
+            await m.reply_photo(
+                photo=VERIFY_IMG,
                 caption=msg.format(message.from_user.mention, get_readable_time(TWO_VERIFY_GAP)),
-                reply_markup=reply_markup,
                 parse_mode=enums.ParseMode.HTML
             )
 
-            await asyncio.sleep(300)
-            await dlt.delete()
-            return         
+            # Mark this request as verified so the normal shortener gate is
+            # skipped for this exact callback and delivery continues below.
+            verified_file_link = True
+            data = f"{'allfiles' if m.command[1].startswith('sendall') else 'file'}_{grp_id}_{file_id}"
         if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
             buttons = [[
                         InlineKeyboardButton('❤️ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ❤️', url=f'http://t.me/{temp.U_NAME}?startgroup=true')
@@ -345,10 +349,18 @@ async def start(client, message):
                     verify_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
                     await db.create_verify_id(user_id, verify_id)
                     temp.VERIFICATIONS[user_id] = grp_id
+                    # Include grp_id in the shortener callback token so the
+                    # verification callback remains tied to the exact group.
                     if message.command[1].startswith('allfiles'):
-                        verify = await get_shortlink(f"https://telegram.me/{temp.U_NAME}?start=sendall_{user_id}_{verify_id}_{file_id}", grp_id, is_second_shortener, is_third_shortener)
+                        verify = await get_shortlink(
+                            f"https://telegram.me/{temp.U_NAME}?start=sendall_{user_id}_{verify_id}_{grp_id}_{file_id}",
+                            grp_id, is_second_shortener, is_third_shortener
+                        )
                     else:
-                        verify = await get_shortlink(f"https://telegram.me/{temp.U_NAME}?start=notcopy_{user_id}_{verify_id}_{file_id}", grp_id, is_second_shortener, is_third_shortener)
+                        verify = await get_shortlink(
+                            f"https://telegram.me/{temp.U_NAME}?start=notcopy_{user_id}_{verify_id}_{grp_id}_{file_id}",
+                            grp_id, is_second_shortener, is_third_shortener
+                        )
                     if is_third_shortener:
                         howtodownload = settings.get('tutorial_3', TUTORIAL_3)
                     else:
