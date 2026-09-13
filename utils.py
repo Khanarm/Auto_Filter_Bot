@@ -1,6 +1,7 @@
 import logging
 import re
 import os
+import json
 import random
 import string
 from info import ULTRA_FAST_MODE, MAX_LIST_ELM, BAD_WORDS, LONG_IMDB_DESCRIPTION, IS_VERIFY, MAX_B_TN, TUTORIAL, TUTORIAL_2, TUTORIAL_3, LOG_CHANNEL, TMDB_ON_SEARCH
@@ -520,25 +521,28 @@ async def get_shortlink(
     is_third_shortener=False
 ):
     """
-    Shorten URL using ashort.in API.
+    Shorten URL using aShort.in
 
-    API:
-        POST https://ashort.in/api/v1/shorten
+    Environment Variables:
 
-    Authentication:
-        X-API-Key header
-
-    Railway variables:
         SHORTENER_WEBSITE=https://ashort.in
         SHORTENER_API=YOUR_API_KEY
+
+    API:
+
+        POST /api/v1/shorten
+
+    Header:
+
+        X-API-Key: YOUR_API_KEY
     """
 
     try:
-        settings = await get_settings(grp_id)
+        # -------------------------------------------------
+        # First check group settings
+        # -------------------------------------------------
 
-        # ---------------------------------
-        # Select configured shortener
-        # ---------------------------------
+        settings = await get_settings(grp_id)
 
         if is_third_shortener:
             api_key = settings.get("api_three")
@@ -552,9 +556,9 @@ async def get_shortlink(
             api_key = settings.get("api")
             website = settings.get("shortner")
 
-        # ---------------------------------
-        # Fallback to environment variables
-        # ---------------------------------
+        # -------------------------------------------------
+        # Environment fallback
+        # -------------------------------------------------
 
         if not api_key:
             api_key = os.environ.get(
@@ -570,9 +574,9 @@ async def get_shortlink(
 
         website = website.rstrip("/")
 
-        # ---------------------------------
-        # Check API key
-        # ---------------------------------
+        # -------------------------------------------------
+        # API key check
+        # -------------------------------------------------
 
         if not api_key:
             logger.warning(
@@ -580,25 +584,17 @@ async def get_shortlink(
             )
             return link
 
-        # ---------------------------------
+        # -------------------------------------------------
         # API endpoint
-        # ---------------------------------
+        # -------------------------------------------------
 
         api_url = f"{website}/api/v1/shorten"
-
-        # ---------------------------------
-        # Request headers
-        # ---------------------------------
 
         headers = {
             "X-API-Key": api_key,
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
-
-        # ---------------------------------
-        # Request body
-        # ---------------------------------
 
         payload = {
             "url": link
@@ -607,6 +603,10 @@ async def get_shortlink(
         timeout = aiohttp.ClientTimeout(
             total=30
         )
+
+        # -------------------------------------------------
+        # Send request
+        # -------------------------------------------------
 
         async with aiohttp.ClientSession(
             timeout=timeout
@@ -620,51 +620,41 @@ async def get_shortlink(
 
                 response_text = await response.text()
 
-                # ---------------------------------
+                # -------------------------------------------------
                 # API error
-                # ---------------------------------
+                # -------------------------------------------------
 
                 if response.status != 200:
                     logger.error(
-                        "ashort.in API error: "
-                        f"{response.status} - "
-                        f"{response_text}"
+                        f"aShort API Error "
+                        f"{response.status}: {response_text}"
                     )
-
                     return link
 
-                # ---------------------------------
-                # Parse JSON
-                # ---------------------------------
+                # -------------------------------------------------
+                # JSON response
+                # -------------------------------------------------
 
                 try:
                     data = json.loads(
                         response_text
                     )
-
                 except json.JSONDecodeError:
                     logger.error(
-                        "ashort.in returned invalid JSON: "
+                        f"aShort returned invalid JSON: "
                         f"{response_text}"
                     )
-
                     return link
 
-                # ---------------------------------
-                # Check success
-                # ---------------------------------
+                # -------------------------------------------------
+                # Success check
+                # -------------------------------------------------
 
                 if not data.get("success"):
                     logger.error(
-                        "ashort.in shortening failed: "
-                        f"{data}"
+                        f"aShort shortening failed: {data}"
                     )
-
                     return link
-
-                # ---------------------------------
-                # Get short URL
-                # ---------------------------------
 
                 short_url = data.get(
                     "short_url"
@@ -672,96 +662,33 @@ async def get_shortlink(
 
                 if not short_url:
                     logger.error(
-                        "ashort.in response does not "
-                        f"contain short_url: {data}"
+                        f"aShort response missing short_url: {data}"
                     )
-
                     return link
 
                 logger.info(
-                    f"URL shortened successfully: "
-                    f"{short_url}"
+                    f"URL shortened successfully: {short_url}"
                 )
 
                 return short_url
 
     except asyncio.TimeoutError:
         logger.error(
-            "ashort.in API request timed out."
+            "aShort API request timed out."
         )
-
         return link
 
     except aiohttp.ClientError as e:
         logger.error(
-            f"ashort.in API connection error: {e}"
+            f"aShort API connection error: {e}"
         )
-
         return link
 
     except Exception as e:
         logger.exception(
             f"Shortener error: {e}"
         )
-
         return link
-
-async def get_settings(group_id):
-    group_id = int(group_id)
-    settings = temp.SETTINGS.get(group_id)
-    if not settings:
-        settings = await db.get_settings(group_id)
-        temp.SETTINGS[group_id] = settings.copy()
-    return settings
-    
-async def save_group_settings(group_id, key, value):
-    group_id = int(group_id)
-    current = await get_settings(group_id)
-    current = current.copy()
-    current.update({key: value})
-    temp.SETTINGS[group_id] = current
-    await db.update_settings(group_id, current)
-
-async def delete_group_setting(group_id, key):
-    group_id = int(group_id)
-    current = await get_settings(group_id)
-    current = current.copy()
-    if key in current:
-        current.pop(key)
-        temp.SETTINGS[group_id] = current
-        await db.update_settings(group_id, current)
-
-def clean_filename(file_name):
-    prefixes = ('[', '@', 'www.')
-    unwanted = {word.lower() for word in BAD_WORDS}
-    
-    file_name = ' '.join(
-        word for word in file_name.split()
-        if not (word.startswith(prefixes) or word.lower() in unwanted)
-    )
-    return file_name
-
-def get_size(size):
-    units = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB"]
-    size = float(size)
-    i = 0
-    while size >= 1024.0 and i < len(units):
-        i += 1
-        size /= 1024.0
-    return "%.2f %s" % (size, units[i])
-
-def split_list(lst, n):
-    for i in range(0, len(lst), n):
-        yield lst[i:i + n]  
-
-def extract_request_content(message_text):
-    match = re.search(r"<u>(.*?)</u>", message_text)
-    if match:
-        return match.group(1).strip()
-    match = re.search(r"📝 ʀᴇǫᴜᴇꜱᴛ ?: ?(.*?)(?:\n|$)", message_text)
-    if match:
-        return match.group(1).strip()
-    return message_text.strip()
 
 def generate_settings_text(settings, title, reset_done=False):
     note = "\n<b>📌 ɴᴏᴛᴇ :- ʀᴇꜱᴇᴛ ꜱᴜᴄᴄᴇꜱꜱғᴜʟʟʏ ✅</b>" if reset_done else ""
