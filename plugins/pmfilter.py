@@ -877,7 +877,6 @@ async def cb_handler(client: Client, query: CallbackQuery):
     
     elif query.data.startswith("sendfiles"):
     ident, key = query.data.split("#")
-    
     settings = await get_settings(query.message.chat.id)
 
     try:
@@ -901,28 +900,11 @@ async def cb_handler(client: Client, query: CallbackQuery):
         )
 
     except PeerIdInvalid:
-        await query.answer(
-            url=original_url
-        )
+        await query.answer(url=original_url)
 
     except Exception as e:
         logger.exception(e)
-        await query.answer(
-            url=original_url
-)
-
-    settings = await get_settings(
-        query.message.chat.id
-    )
-
-    # -------------------------------------------------
-    # Original SEND ALL Telegram URL
-    # -------------------------------------------------
-
-    original_url = (
-        f"https://t.me/{temp.U_NAME}"
-        f"?start=allfiles_{query.message.chat.id}_{key}"
-    )
+        await query.answer(url=original_url)
 
     # -------------------------------------------------
     # Shorten with aShort.in
