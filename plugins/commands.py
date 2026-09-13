@@ -303,7 +303,7 @@ async def start(client, message):
                 settings = await get_settings(grp_id)
                 is_second_shortener = await db.use_second_shortener(user_id, settings.get('verify_time', TWO_VERIFY_GAP)) 
                 is_third_shortener = await db.use_third_shortener(user_id, settings.get('third_verify_time', THREE_VERIFY_GAP))
-                if settings.get("is_verify", IS_VERIFY) and (not user_verified or is_second_shortener or is_third_shortener):
+                if settings.get("is_verify", IS_VERIFY):
                     verify_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
                     await db.create_verify_id(user_id, verify_id)
                     temp.VERIFICATIONS[user_id] = grp_id
@@ -419,7 +419,7 @@ async def start(client, message):
                     except Exception:
                         return
                 await msg.edit_caption(f_caption, reply_markup=InlineKeyboardMarkup(btn))
-                k = await msg.reply(script.DEL_MSG.format(get_time(DELETE_TIME)), quote=True, parse_mode=enums.ParseMode.HTML)
+                k = await msg.reply(script.DEL_MSG.format(get_time(DELETE_TIME)), parse_mode=enums.ParseMode.HTML)
                 await asyncio.sleep(DELETE_TIME)
                 await msg.delete()
                 await k.edit_text("<b>ʏᴏᴜʀ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ ɪꜱ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴅᴇʟᴇᴛᴇᴅ !!</b>")
@@ -455,7 +455,7 @@ async def start(client, message):
             reply_markup=InlineKeyboardMarkup(btn)
         )
         
-        k = await msg.reply(script.DEL_MSG.format(get_time(DELETE_TIME)), quote=True, parse_mode=enums.ParseMode.HTML)
+        k = await msg.reply(script.DEL_MSG.format(get_time(DELETE_TIME)), parse_mode=enums.ParseMode.HTML)
         await asyncio.sleep(DELETE_TIME)
         await msg.delete()
         await k.edit_text("<b>ʏᴏᴜʀ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ ɪꜱ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴅᴇʟᴇᴛᴇᴅ !!</b>")
