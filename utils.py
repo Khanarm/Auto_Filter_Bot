@@ -513,21 +513,198 @@ async def search_gagala(text):
     titles = soup.find_all('h3')
     return [title.get_text() for title in titles if title.get_text().strip()]
 
-async def get_shortlink(link, grp_id, is_second_shortener=False, is_third_shortener=False):
-    settings = await get_settings(grp_id)
-    if is_third_shortener:             
-        api, site = settings['api_three'], settings['shortner_three']
-    else:
-        if is_second_shortener:
-            api, site = settings['api_two'], settings['shortner_two']
-        else:
-            api, site = settings['api'], settings['shortner']
-    shortzy = Shortzy(api, site)
+async def get_shortlink(
+    link,
+    grp_id,
+    is_second_shortener=False,
+    is_third_shortener=False
+):
+    """
+    Shorten URL using ashort.in API.
+
+    API:
+        POST https://ashort.in/api/v1/shorten
+
+    Authentication:
+        X-API-Key header
+
+    Railway variables:
+        SHORTENER_WEBSITE=https://ashort.in
+        SHORTENER_API=YOUR_API_KEY
+    """
+
     try:
-        link = await shortzy.convert(link)
-    except Exception:
-        link = await shortzy.get_quick_link(link)
-    return link
+        settings = await get_settings(grp_id)
+
+        # ---------------------------------
+        # Select configured shortener
+        # ---------------------------------
+
+        if is_third_shortener:
+            api_key = settings.get("api_three")
+            website = settings.get("shortner_three")
+
+        elif is_second_shortener:
+            api_key = settings.get("api_two")
+            website = settings.get("shortner_two")
+
+        else:
+            api_key = settings.get("api")
+            website = settings.get("shortner")
+
+        # ---------------------------------
+        # Fallback to environment variables
+        # ---------------------------------
+
+        if not api_key:
+            api_key = os.environ.get(
+                "SHORTENER_API",
+                ""
+            ).strip()
+
+        if not website:
+            website = os.environ.get(
+                "SHORTENER_WEBSITE",
+                "https://ashort.in"
+            ).strip()
+
+        website = website.rstrip("/")
+
+        # ---------------------------------
+        # Check API key
+        # ---------------------------------
+
+        if not api_key:
+            logger.warning(
+                "SHORTENER_API is not configured."
+            )
+            return link
+
+        # ---------------------------------
+        # API endpoint
+        # ---------------------------------
+
+        api_url = f"{website}/api/v1/shorten"
+
+        # ---------------------------------
+        # Request headers
+        # ---------------------------------
+
+        headers = {
+            "X-API-Key": api_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+
+        # ---------------------------------
+        # Request body
+        # ---------------------------------
+
+        payload = {
+            "url": link
+        }
+
+        timeout = aiohttp.ClientTimeout(
+            total=30
+        )
+
+        async with aiohttp.ClientSession(
+            timeout=timeout
+        ) as session:
+
+            async with session.post(
+                api_url,
+                json=payload,
+                headers=headers
+            ) as response:
+
+                response_text = await response.text()
+
+                # ---------------------------------
+                # API error
+                # ---------------------------------
+
+                if response.status != 200:
+                    logger.error(
+                        "ashort.in API error: "
+                        f"{response.status} - "
+                        f"{response_text}"
+                    )
+
+                    return link
+
+                # ---------------------------------
+                # Parse JSON
+                # ---------------------------------
+
+                try:
+                    data = json.loads(
+                        response_text
+                    )
+
+                except json.JSONDecodeError:
+                    logger.error(
+                        "ashort.in returned invalid JSON: "
+                        f"{response_text}"
+                    )
+
+                    return link
+
+                # ---------------------------------
+                # Check success
+                # ---------------------------------
+
+                if not data.get("success"):
+                    logger.error(
+                        "ashort.in shortening failed: "
+                        f"{data}"
+                    )
+
+                    return link
+
+                # ---------------------------------
+                # Get short URL
+                # ---------------------------------
+
+                short_url = data.get(
+                    "short_url"
+                )
+
+                if not short_url:
+                    logger.error(
+                        "ashort.in response does not "
+                        f"contain short_url: {data}"
+                    )
+
+                    return link
+
+                logger.info(
+                    f"URL shortened successfully: "
+                    f"{short_url}"
+                )
+
+                return short_url
+
+    except asyncio.TimeoutError:
+        logger.error(
+            "ashort.in API request timed out."
+        )
+
+        return link
+
+    except aiohttp.ClientError as e:
+        logger.error(
+            f"ashort.in API connection error: {e}"
+        )
+
+        return link
+
+    except Exception as e:
+        logger.exception(
+            f"Shortener error: {e}"
+        )
+
+        return link
 
 async def get_settings(group_id):
     group_id = int(group_id)
