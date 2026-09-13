@@ -1,5 +1,26 @@
 import logging
-from utils import get_random_mix_id, get_size, is_subscribed, is_req_subscribed, group_setting_buttons, get_poster, get_posterx, temp, get_settings, save_group_settings, get_cap, imdb, is_check_admin, extract_request_content, log_error, clean_filename, generate_season_variations, clean_search_text, get_settings_text
+from utils import (
+    get_random_mix_id,
+    get_size,
+    is_subscribed,
+    is_req_subscribed,
+    group_setting_buttons,
+    get_poster,
+    get_posterx,
+    temp,
+    get_settings,
+    save_group_settings,
+    get_cap,
+    imdb,
+    is_check_admin,
+    extract_request_content,
+    log_error,
+    clean_filename,
+    generate_season_variations,
+    clean_search_text,
+    get_settings_text,
+    get_shortlink
+)
 from rapidfuzz import process
 from dreamxbotz.util.file_properties import get_name, get_hash
 from urllib.parse import quote_plus
@@ -856,26 +877,77 @@ async def cb_handler(client: Client, query: CallbackQuery):
 
 
 
-    if query.data.startswith("file"):
-        ident, file_id = query.data.split("#")
-        user = query.message.reply_to_message.from_user.id if query.message.reply_to_message else query.from_user.id
-        if int(user) != 0 and query.from_user.id != int(user):
-            return await query.answer(script.ALRT_TXT.format(query.from_user.first_name), show_alert=True)
-        await query.answer(url=f"https://t.me/{temp.U_NAME}?start=file_{query.message.chat.id}_{file_id}")
-
     elif query.data.startswith("sendfiles"):
-        ident, key = query.data.split("#")
-        settings = await get_settings(query.message.chat.id)
-        try:
-            await query.answer(url=f"https://telegram.me/{temp.U_NAME}?start=allfiles_{query.message.chat.id}_{key}")
-            return
-        except UserIsBlocked:
-            await query.answer('Uɴʙʟᴏᴄᴋ ᴛʜᴇ ʙᴏᴛ ᴍᴀʜɴ !', show_alert=True)
-        except PeerIdInvalid:
-            await query.answer(url=f"https://telegram.me/{temp.U_NAME}?start=sendfiles3_{key}")
-        except Exception as e:
-            logger.exception(e)
-            await query.answer(url=f"https://telegram.me/{temp.U_NAME}?start=sendfiles4_{key}")
+    ident, key = query.data.split("#")
+
+    settings = await get_settings(
+        query.message.chat.id
+    )
+
+    # -------------------------------------------------
+    # Original SEND ALL Telegram URL
+    # -------------------------------------------------
+
+    original_url = (
+        f"https://t.me/{temp.U_NAME}"
+        f"?start=allfiles_{query.message.chat.id}_{key}"
+    )
+
+    # -------------------------------------------------
+    # Shorten with aShort.in
+    # -------------------------------------------------
+
+    try:
+        short_url = await get_shortlink(
+            original_url,
+            query.message.chat.id
+        )
+
+    except Exception as e:
+        logger.exception(
+            f"SEND ALL shortener error: {e}"
+        )
+        short_url = original_url
+
+    # -------------------------------------------------
+    # Open shortened URL
+    # -------------------------------------------------
+
+    try:
+        await query.answer(
+            url=short_url
+        )
+        return
+
+    except UserIsBlocked:
+        await query.answer(
+            "Uɴʙʟᴏᴄᴋ ᴛʜᴇ ʙᴏᴛ ᴍᴀʜɴ !",
+            show_alert=True
+        )
+
+    except PeerIdInvalid:
+        fallback_url = (
+            f"https://t.me/{temp.U_NAME}"
+            f"?start=sendfiles3_{key}"
+        )
+
+        await query.answer(
+            url=fallback_url
+        )
+
+    except Exception as e:
+        logger.exception(
+            f"SEND ALL callback error: {e}"
+        )
+
+        fallback_url = (
+            f"https://t.me/{temp.U_NAME}"
+            f"?start=sendfiles4_{key}"
+        )
+
+        await query.answer(
+            url=fallback_url
+        )
 
 
 
