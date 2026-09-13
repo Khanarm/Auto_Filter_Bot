@@ -73,7 +73,22 @@ async def start(client, message):
                 verifiedfiles = f"https://telegram.me/{temp.U_NAME}?start=allfiles_{grp_id}_{file_id}"
             else:
                 verifiedfiles = f"https://telegram.me/{temp.U_NAME}?start=file_{grp_id}_{file_id}"
-            await client.send_message(settings['log'], script.VERIFIED_LOG_TEXT.format(m.from_user.mention, user_id, datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d %B %Y'), num))
+            # Logging must never block the user from receiving the verified file button.
+            # If LOG_CHANNEL/settings['log'] is invalid or unavailable, continue normally.
+            try:
+                log_chat = settings.get('log')
+                if log_chat and str(log_chat) not in ('-100', '0', 'None'):
+                    await client.send_message(
+                        log_chat,
+                        script.VERIFIED_LOG_TEXT.format(
+                            m.from_user.mention,
+                            user_id,
+                            datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d %B %Y'),
+                            num
+                        )
+                    )
+            except Exception:
+                pass
             btn = [[
                 InlineKeyboardButton("✅ ᴄʟɪᴄᴋ ʜᴇʀᴇ ᴛᴏ ɢᴇᴛ ꜰɪʟᴇ ✅", url=verifiedfiles),
             ]]
