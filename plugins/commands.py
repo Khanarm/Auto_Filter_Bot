@@ -73,22 +73,7 @@ async def start(client, message):
                 verifiedfiles = f"https://telegram.me/{temp.U_NAME}?start=allfiles_{grp_id}_{file_id}"
             else:
                 verifiedfiles = f"https://telegram.me/{temp.U_NAME}?start=file_{grp_id}_{file_id}"
-            # Logging must never block the user from receiving the verified file button.
-            # If LOG_CHANNEL/settings['log'] is invalid or unavailable, continue normally.
-            try:
-                log_chat = settings.get('log')
-                if log_chat and str(log_chat) not in ('-100', '0', 'None'):
-                    await client.send_message(
-                        log_chat,
-                        script.VERIFIED_LOG_TEXT.format(
-                            m.from_user.mention,
-                            user_id,
-                            datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d %B %Y'),
-                            num
-                        )
-                    )
-            except Exception:
-                pass
+            await client.send_message(settings['log'], script.VERIFIED_LOG_TEXT.format(m.from_user.mention, user_id, datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d %B %Y'), num))
             btn = [[
                 InlineKeyboardButton("✅ ᴄʟɪᴄᴋ ʜᴇʀᴇ ᴛᴏ ɢᴇᴛ ꜰɪʟᴇ ✅", url=verifiedfiles),
             ]]
@@ -311,7 +296,13 @@ async def start(client, message):
                 logger.error(f"❗️ Force Sub Error:\n\n{repr(e)}")
 
         user_id = m.from_user.id
-        if not await db.has_premium_access(user_id):
+
+        # IMPORTANT: after the shortener redirects to /start=notcopy_..., the
+        # verification handler marks the user as verified and gives them a
+        # /start=file_... button. That second /start must deliver the file
+        # directly instead of creating another shortener link.
+        # Only apply this bypass to the post-verification file link.
+        if not (data.startswith("file_") and await db.user_verified(user_id)) and not await db.has_premium_access(user_id):
             try:
                 grp_id = int(grp_id)
                 user_verified = await db.is_user_verified(user_id)
