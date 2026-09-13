@@ -69,10 +69,20 @@ async def start(client, message):
                 msg = script.THIRDT_VERIFY_COMPLETE_TEXT
             else:
                 msg = script.SECOND_VERIFY_COMPLETE_TEXT if key == "second_time_verified" else script.VERIFY_COMPLETE_TEXT
+            # The link shown after successful shortener verification is a
+            # protected direct-file link.  It carries the verification ID so
+            # it can bypass the shortener ONLY after that exact verification
+            # record has been marked verified.
             if message.command[1].startswith('sendall'):
-                verifiedfiles = f"https://telegram.me/{temp.U_NAME}?start=allfiles_{grp_id}_{file_id}"
+                verifiedfiles = (
+                    f"https://telegram.me/{temp.U_NAME}?start="
+                    f"verifiedall_{user_id}_{verify_id}_{grp_id}_{file_id}"
+                )
             else:
-                verifiedfiles = f"https://telegram.me/{temp.U_NAME}?start=file_{grp_id}_{file_id}"
+                verifiedfiles = (
+                    f"https://telegram.me/{temp.U_NAME}?start="
+                    f"verified_{user_id}_{verify_id}_{grp_id}_{file_id}"
+                )
             await client.send_message(settings['log'], script.VERIFIED_LOG_TEXT.format(m.from_user.mention, user_id, datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d %B %Y'), num))
             btn = [[
                 InlineKeyboardButton("✅ ᴄʟɪᴄᴋ ʜᴇʀᴇ ᴛᴏ ɢᴇᴛ ꜰɪʟᴇ ✅", url=verifiedfiles),
@@ -245,6 +255,30 @@ async def start(client, message):
             raise StopPropagation
 
         data = message.command[1]
+
+        # A verified_* link is created ONLY by the successful verification
+        # handler above.  Validate its exact verification record before
+        # converting it into the normal file/allfiles start payload.
+        verified_file_link = False
+        if data.startswith("verified_") or data.startswith("verifiedall_"):
+            try:
+                prefix, link_user, link_verify_id, link_grp_id, link_file_id = data.split("_", 4)
+                link_user = int(link_user)
+                link_grp_id = int(link_grp_id)
+                if link_user != message.from_user.id:
+                    return await message.reply_text(script.LINK_EXPIRED_TXT)
+                verify_info = await db.get_verify_id_info(link_user, link_verify_id)
+                if not verify_info or not verify_info.get("verified"):
+                    return await message.reply_text(script.LINK_EXPIRED_TXT)
+                verified_file_link = True
+                data = (
+                    f"allfiles_{link_grp_id}_{link_file_id}"
+                    if prefix == "verifiedall"
+                    else f"file_{link_grp_id}_{link_file_id}"
+                )
+            except Exception:
+                return await message.reply_text(script.LINK_EXPIRED_TXT)
+
         try:
             _, grp_id, file_id = data.split("_", 2)
             grp_id = int(grp_id)
@@ -297,12 +331,10 @@ async def start(client, message):
 
         user_id = m.from_user.id
 
-        # IMPORTANT: after the shortener redirects to /start=notcopy_..., the
-        # verification handler marks the user as verified and gives them a
-        # /start=file_... button. That second /start must deliver the file
-        # directly instead of creating another shortener link.
-        # Only apply this bypass to the post-verification file link.
-        if not (data.startswith("file_") and await db.user_verified(user_id)) and not await db.has_premium_access(user_id):
+        # Normal episode links MUST always go through the shortener/verification
+        # flow.  Only the protected verified_* link created by the verification
+        # handler is allowed to bypass it.
+        if not verified_file_link and not await db.has_premium_access(user_id):
             try:
                 grp_id = int(grp_id)
                 user_verified = await db.is_user_verified(user_id)
