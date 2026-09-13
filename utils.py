@@ -690,6 +690,51 @@ async def get_shortlink(
         )
         return link
 
+async def get_settings(group_id):
+    group_id = int(group_id)
+    settings = temp.SETTINGS.get(group_id)
+
+    if not settings:
+        settings = await db.get_settings(group_id)
+        temp.SETTINGS[group_id] = settings.copy()
+
+    return settings
+
+
+async def save_group_settings(group_id, key, value):
+    group_id = int(group_id)
+
+    current = await get_settings(group_id)
+    current = current.copy()
+
+    current.update({
+        key: value
+    })
+
+    temp.SETTINGS[group_id] = current
+
+    await db.update_settings(
+        group_id,
+        current
+    )
+
+
+async def delete_group_setting(group_id, key):
+    group_id = int(group_id)
+
+    current = await get_settings(group_id)
+    current = current.copy()
+
+    if key in current:
+        current.pop(key)
+
+        temp.SETTINGS[group_id] = current
+
+        await db.update_settings(
+            group_id,
+            current
+    )
+
 def generate_settings_text(settings, title, reset_done=False):
     note = "\n<b>📌 ɴᴏᴛᴇ :- ʀᴇꜱᴇᴛ ꜱᴜᴄᴄᴇꜱꜱғᴜʟʟʏ ✅</b>" if reset_done else ""
     return f"""<b>⚙️ ʏᴏᴜʀ sᴇᴛᴛɪɴɢs ꜰᴏʀ - {title}</b>
