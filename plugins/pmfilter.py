@@ -876,8 +876,8 @@ async def cb_handler(client: Client, query: CallbackQuery):
         await query.answer("ᴛʜɪs ɪs ᴘᴀɢᴇs ʙᴜᴛᴛᴏɴ 😅")
     
     elif query.data.startswith("sendfiles"):
-    ident, key = query.data.split("#")
-    settings = await get_settings(query.message.chat.id)
+       ident, key = query.data.split("#")
+            settings = await get_settings(query.message.chat.id)
 
     try:
         original_url = (
