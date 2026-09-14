@@ -74,7 +74,7 @@ async def start(client, message):
             btn = [[
                 InlineKeyboardButton("✅ ᴄʟɪᴄᴋ ʜᴇʀᴇ ᴛᴏ ɢᴇᴛ ꜰɪʟᴇ ✅", url=verifiedfiles),
             ]]
-            reply_markup=InlineKeyboardMarkup(btn)
+            reply_markup = InlineKeyboardMarkup(btn)
             dlt=await m.reply_photo(
                 photo=(VERIFY_IMG),
                 caption=msg.format(message.from_user.mention, get_readable_time(TWO_VERIFY_GAP)),
