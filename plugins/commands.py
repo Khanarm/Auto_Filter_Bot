@@ -44,70 +44,82 @@ async def start(client, message):
                 asyncio.create_task(message.react(emoji="⚡️"))
                 pass
         m = message
+        verified_file_link = False
         if len(m.command) == 2 and m.command[1].startswith(('notcopy', 'sendall')):
-            # New verification links carry the group id in the token itself.
-            # This avoids relying on temp.VERIFICATIONS, which is only in-memory
-            # and can be lost/overwritten when users request multiple files.
-            # Keep Telegram's /start payload short.  The verification token
-            # contains only user_id + verify_id; the actual group/file payload
-            # is stored in MongoDB against this verify_id.
-            parts = m.command[1].split("_", 2)
-            if len(parts) != 3:
+            # Verification callback format: notcopy_<user_id>_<verify_id>
+            # The actual group/file payload is stored in MongoDB.
+            try:
+                parts = m.command[1].split("_", 2)
+                if len(parts) != 3:
+                    return await message.reply(script.LINK_EXPIRED_TXT)
+
+                prefix, userid, verify_id = parts
+                user_id = int(userid)
+                if user_id != message.from_user.id:
+                    return await message.reply(script.LINK_EXPIRED_TXT)
+
+                verify_info = await db.get_verify_id_info(user_id, verify_id)
+                if not verify_info:
+                    return await message.reply(script.LINK_EXPIRED_TXT)
+
+                grp_id = int(verify_info.get("grp_id", 0))
+                file_id = verify_info.get("file_id")
+                is_allfiles = bool(verify_info.get("allfiles", prefix == "sendall"))
+                if not grp_id or not file_id:
+                    logger.error("Verification payload missing: user=%s verify=%s info=%r", user_id, verify_id, verify_info)
+                    return await message.reply(script.LINK_EXPIRED_TXT)
+
+                if verify_info.get("verified"):
+                    # A completed link is intentionally rejected.
+                    return await message.reply(script.LINK_EXPIRED_TXT)
+
+                ist_timezone = pytz.timezone('Asia/Kolkata')
+                if await db.user_verified(user_id):
+                    key = "third_time_verified"
+                else:
+                    key = "second_time_verified" if await db.is_user_verified(user_id) else "last_verified"
+                current_time = datetime.now(tz=ist_timezone)
+                await db.update_notcopy_user(user_id, {key: current_time})
+                await db.update_verify_id_info(user_id, verify_id, {"verified": True})
+
+                # Convert the verified request into the normal delivery payload.
+                # IMPORTANT: do this before any optional notification/logging.
+                verified_file_link = True
+                data = f"{'allfiles' if is_allfiles else 'file'}_{grp_id}_{file_id}"
+
+                # Optional completion notification must never block file delivery.
+                try:
+                    settings = await get_settings(grp_id)
+                    if key == "third_time_verified":
+                        num = 3
+                        msg = script.THIRDT_VERIFY_COMPLETE_TEXT
+                    else:
+                        num = 2 if key == "second_time_verified" else 1
+                        msg = script.SECOND_VERIFY_COMPLETE_TEXT if key == "second_time_verified" else script.VERIFY_COMPLETE_TEXT
+                    try:
+                        await client.send_message(
+                            settings.get('log', LOG_CHANNEL),
+                            script.VERIFIED_LOG_TEXT.format(
+                                m.from_user.mention, user_id,
+                                datetime.now(ist_timezone).strftime('%d %B %Y'), num
+                            )
+                        )
+                    except Exception:
+                        logger.exception("Verification log failed; continuing delivery")
+                    # Do not let a bad VERIFY_IMG/caption stop the requested file.
+                    try:
+                        await m.reply_photo(
+                            photo=VERIFY_IMG,
+                            caption=msg.format(message.from_user.mention, get_readable_time(TWO_VERIFY_GAP)),
+                            parse_mode=enums.ParseMode.HTML
+                        )
+                    except Exception:
+                        logger.exception("Verification completion message failed; continuing delivery")
+                except Exception:
+                    logger.exception("Optional verification notification failed; continuing delivery")
+            except Exception as e:
+                logger.exception("Verification callback failed: %s", e)
                 return await message.reply(script.LINK_EXPIRED_TXT)
-
-            _, userid, verify_id = parts
-            user_id = int(userid)
-            verify_id_info = await db.get_verify_id_info(user_id, verify_id)
-            if not verify_id_info or verify_id_info.get("verified"):
-                return await message.reply(script.LINK_EXPIRED_TXT)
-
-            grp_id = int(verify_id_info.get("grp_id", 0))
-            file_id = verify_id_info.get("file_id")
-            is_allfiles = bool(verify_id_info.get("allfiles", False))
-            if not grp_id or not file_id:
-                return await message.reply(script.LINK_EXPIRED_TXT)
-
-            settings = await get_settings(grp_id)
-
-            ist_timezone = pytz.timezone('Asia/Kolkata')
-            if await db.user_verified(user_id):
-                key = "third_time_verified"
-            else:
-                key = "second_time_verified" if await db.is_user_verified(user_id) else "last_verified"
-            current_time = datetime.now(tz=ist_timezone)
-            await db.update_notcopy_user(user_id, {key: current_time})
-            await db.update_verify_id_info(user_id, verify_id, {"verified": True})
-
-            if key == "third_time_verified":
-                num = 3
-                msg = script.THIRDT_VERIFY_COMPLETE_TEXT
-            else:
-                num = 2 if key == "second_time_verified" else 1
-                msg = script.SECOND_VERIFY_COMPLETE_TEXT if key == "second_time_verified" else script.VERIFY_COMPLETE_TEXT
-
-            await client.send_message(
-                settings['log'],
-                script.VERIFIED_LOG_TEXT.format(
-                    m.from_user.mention,
-                    user_id,
-                    datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d %B %Y'),
-                    num
-                )
-            )
-
-            # Verification is complete. Show the completion message and then
-            # continue through the normal delivery code below so the requested
-            # file is sent automatically. No second "Get File" click is needed.
-            await m.reply_photo(
-                photo=VERIFY_IMG,
-                caption=msg.format(message.from_user.mention, get_readable_time(TWO_VERIFY_GAP)),
-                parse_mode=enums.ParseMode.HTML
-            )
-
-            # Mark this request as verified so the normal shortener gate is
-            # skipped for this exact callback and delivery continues below.
-            verified_file_link = True
-            data = f"{'allfiles' if is_allfiles else 'file'}_{grp_id}_{file_id}"
         if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
             buttons = [[
                         InlineKeyboardButton('❤️ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ❤️', url=f'http://t.me/{temp.U_NAME}?startgroup=true')
@@ -355,17 +367,10 @@ async def start(client, message):
                     verify_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
                     await db.create_verify_id(user_id, verify_id)
                     temp.VERIFICATIONS[user_id] = grp_id
-                    # Store the long file payload in MongoDB and keep only a
-                    # short token in Telegram's start parameter. Telegram limits
-                    # deep-link start payloads, while Telegram file_ids can be long.
                     is_allfiles = message.command[1].startswith('allfiles')
                     await db.update_verify_id_info(
                         user_id, verify_id,
-                        {
-                            "grp_id": grp_id,
-                            "file_id": file_id,
-                            "allfiles": is_allfiles
-                        }
+                        {"grp_id": grp_id, "file_id": file_id, "allfiles": is_allfiles}
                     )
                     verify = await get_shortlink(
                         f"https://telegram.me/{temp.U_NAME}?start={'sendall' if is_allfiles else 'notcopy'}_{user_id}_{verify_id}",
