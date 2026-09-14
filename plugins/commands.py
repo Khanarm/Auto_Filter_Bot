@@ -12,7 +12,7 @@ from Script import script
 from datetime import datetime, timedelta
 from database.refer import referdb
 from database.config_db import mdb
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
+from pyrogram.types import LinkPreviewOptions, InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
 from pyrogram import Client, filters, enums, StopPropagation
 from pyrogram.errors import FloodWait, UserNotParticipant , ChannelInvalid, PeerIdInvalid
 from database.ia_filterdb import Media, Media2, get_file_details, unpack_new_file_id, get_bad_files, save_file
@@ -30,6 +30,7 @@ from utils import get_settings, save_group_settings, is_subscribed, is_req_subsc
 logger = logging.getLogger(__name__)
 
 TIMEZONE = "Asia/Kolkata"
+VERIFICATION_VALIDITY_SECONDS = 20 * 60  # 20 minutes
 BATCH_FILES = {}
 REQUEST_INVITE_LINK_CACHE: dict[int, str] = {}
 
@@ -44,82 +45,50 @@ async def start(client, message):
                 asyncio.create_task(message.react(emoji="⚡️"))
                 pass
         m = message
-        verified_file_link = False
         if len(m.command) == 2 and m.command[1].startswith(('notcopy', 'sendall')):
-            # Verification callback format: notcopy_<user_id>_<verify_id>
-            # The actual group/file payload is stored in MongoDB.
-            try:
-                parts = m.command[1].split("_", 2)
-                if len(parts) != 3:
-                    return await message.reply(script.LINK_EXPIRED_TXT)
+            _, userid, verify_id, file_id = m.command[1].split("_", 3)
+            user_id = int(userid)
+            grp_id = temp.VERIFICATIONS.get(user_id, 0)
+            settings = await get_settings(grp_id)         
+            verify_id_info = await db.get_verify_id_info(user_id, verify_id)
+            if not verify_id_info or verify_id_info["verified"]:
+                return await message.reply(script.LINK_EXPIRED_TXT)  
 
-                prefix, userid, verify_id = parts
-                user_id = int(userid)
-                if user_id != message.from_user.id:
-                    return await message.reply(script.LINK_EXPIRED_TXT)
+            ist_timezone = pytz.timezone('Asia/Kolkata')
+            # A successful verification always starts a fresh 20-minute validity window.
+            # This intentionally uses only last_verified so second/third verification
+            # cycles cannot cause an immediate verification loop.
+            key = "last_verified"
+            current_time = datetime.now(tz=ist_timezone)
+            await db.update_notcopy_user(user_id, {key: current_time})
+            await db.update_verify_id_info(user_id, verify_id, {"verified":True})
+            if key == "third_time_verified": 
+                num = 3 
+            else: 
+                num =  2 if key == "second_time_verified" else 1 
+            if key == "third_time_verified": 
+                msg = script.THIRDT_VERIFY_COMPLETE_TEXT
+            else:
+                msg = script.SECOND_VERIFY_COMPLETE_TEXT if key == "second_time_verified" else script.VERIFY_COMPLETE_TEXT
+            if message.command[1].startswith('sendall'):
+                verifiedfiles = f"https://telegram.me/{temp.U_NAME}?start=allfiles_{grp_id}_{file_id}"
+            else:
+                verifiedfiles = f"https://telegram.me/{temp.U_NAME}?start=file_{grp_id}_{file_id}"
+            await client.send_message(settings['log'], script.VERIFIED_LOG_TEXT.format(m.from_user.mention, user_id, datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d %B %Y'), num))
+            btn = [[
+                InlineKeyboardButton("✅ ᴄʟɪᴄᴋ ʜᴇʀᴇ ᴛᴏ ɢᴇᴛ ꜰɪʟᴇ ✅", url=verifiedfiles),
+            ]]
+            reply_markup=InlineKeyboardMarkup(btn)
+            dlt=await m.reply_photo(
+                photo=(VERIFY_IMG),
+                caption=msg.format(message.from_user.mention, get_readable_time(TWO_VERIFY_GAP)),
+                reply_markup=reply_markup,
+                parse_mode=enums.ParseMode.HTML
+            )
 
-                verify_info = await db.get_verify_id_info(user_id, verify_id)
-                if not verify_info:
-                    return await message.reply(script.LINK_EXPIRED_TXT)
-
-                grp_id = int(verify_info.get("grp_id", 0))
-                file_id = verify_info.get("file_id")
-                is_allfiles = bool(verify_info.get("allfiles", prefix == "sendall"))
-                if not grp_id or not file_id:
-                    logger.error("Verification payload missing: user=%s verify=%s info=%r", user_id, verify_id, verify_info)
-                    return await message.reply(script.LINK_EXPIRED_TXT)
-
-                if verify_info.get("verified"):
-                    # A completed link is intentionally rejected.
-                    return await message.reply(script.LINK_EXPIRED_TXT)
-
-                ist_timezone = pytz.timezone('Asia/Kolkata')
-                if await db.user_verified(user_id):
-                    key = "third_time_verified"
-                else:
-                    key = "second_time_verified" if await db.is_user_verified(user_id) else "last_verified"
-                current_time = datetime.now(tz=ist_timezone)
-                await db.update_notcopy_user(user_id, {key: current_time})
-                await db.update_verify_id_info(user_id, verify_id, {"verified": True})
-
-                # Convert the verified request into the normal delivery payload.
-                # IMPORTANT: do this before any optional notification/logging.
-                verified_file_link = True
-                data = f"{'allfiles' if is_allfiles else 'file'}_{grp_id}_{file_id}"
-
-                # Optional completion notification must never block file delivery.
-                try:
-                    settings = await get_settings(grp_id)
-                    if key == "third_time_verified":
-                        num = 3
-                        msg = script.THIRDT_VERIFY_COMPLETE_TEXT
-                    else:
-                        num = 2 if key == "second_time_verified" else 1
-                        msg = script.SECOND_VERIFY_COMPLETE_TEXT if key == "second_time_verified" else script.VERIFY_COMPLETE_TEXT
-                    try:
-                        await client.send_message(
-                            settings.get('log', LOG_CHANNEL),
-                            script.VERIFIED_LOG_TEXT.format(
-                                m.from_user.mention, user_id,
-                                datetime.now(ist_timezone).strftime('%d %B %Y'), num
-                            )
-                        )
-                    except Exception:
-                        logger.exception("Verification log failed; continuing delivery")
-                    # Do not let a bad VERIFY_IMG/caption stop the requested file.
-                    try:
-                        await m.reply_photo(
-                            photo=VERIFY_IMG,
-                            caption=msg.format(message.from_user.mention, get_readable_time(TWO_VERIFY_GAP)),
-                            parse_mode=enums.ParseMode.HTML
-                        )
-                    except Exception:
-                        logger.exception("Verification completion message failed; continuing delivery")
-                except Exception:
-                    logger.exception("Optional verification notification failed; continuing delivery")
-            except Exception as e:
-                logger.exception("Verification callback failed: %s", e)
-                return await message.reply(script.LINK_EXPIRED_TXT)
+            await asyncio.sleep(300)
+            await dlt.delete()
+            return         
         if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
             buttons = [[
                         InlineKeyboardButton('❤️ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ❤️', url=f'http://t.me/{temp.U_NAME}?startgroup=true')
@@ -127,7 +96,7 @@ async def start(client, message):
                         InlineKeyboardButton('🍁 Update Channel 🍁', url=UPDATE_CHNL_LNK)
                       ]]
             reply_markup = InlineKeyboardMarkup(buttons)
-            await message.reply(script.GSTART_TXT.format(message.from_user.mention if message.from_user else message.chat.title, temp.U_NAME, temp.B_NAME), reply_markup=reply_markup, disable_web_page_preview=True)
+            await message.reply(script.GSTART_TXT.format(message.from_user.mention if message.from_user else message.chat.title, temp.U_NAME, temp.B_NAME), reply_markup=reply_markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
 
             await asyncio.sleep(2) 
             if not await db.get_chat(message.chat.id):
@@ -242,7 +211,7 @@ async def start(client, message):
                     await client.send_message(
                         chat_id=user_id,
                         text=f"<b>Hᴇʏ {uss.mention}\n\nYᴏᴜ ɢᴏᴛ 1 ᴍᴏɴᴛʜ ᴘʀᴇᴍɪᴜᴍ sᴜʙsᴄʀɪᴘᴛɪᴏɴ ʙʏ ɪɴᴠɪᴛɪɴɢ 10 ᴜsᴇʀs ❗</b>",
-                        disable_web_page_preview=True              
+                        link_preview_options=LinkPreviewOptions(is_disabled=True)              
                     )
                 for admin in ADMINS:
                     await client.send_message(chat_id=admin, text=f"Sᴜᴄᴄᴇss ғᴜʟʟʏ ᴛᴀsᴋ ᴄᴏᴍᴘʟᴇᴛᴇᴅ ʙʏ ᴛʜɪs ᴜsᴇʀ:\n\nuser Nᴀᴍᴇ: {uss.mention}\n\nUsᴇʀ ɪᴅ: {uss.id}!")	
@@ -277,30 +246,6 @@ async def start(client, message):
             raise StopPropagation
 
         data = message.command[1]
-
-        # A verified_* link is created ONLY by the successful verification
-        # handler above.  Validate its exact verification record before
-        # converting it into the normal file/allfiles start payload.
-        verified_file_link = False
-        if data.startswith("verified_") or data.startswith("verifiedall_"):
-            try:
-                prefix, link_user, link_verify_id, link_grp_id, link_file_id = data.split("_", 4)
-                link_user = int(link_user)
-                link_grp_id = int(link_grp_id)
-                if link_user != message.from_user.id:
-                    return await message.reply_text(script.LINK_EXPIRED_TXT)
-                verify_info = await db.get_verify_id_info(link_user, link_verify_id)
-                if not verify_info or not verify_info.get("verified"):
-                    return await message.reply_text(script.LINK_EXPIRED_TXT)
-                verified_file_link = True
-                data = (
-                    f"allfiles_{link_grp_id}_{link_file_id}"
-                    if prefix == "verifiedall"
-                    else f"file_{link_grp_id}_{link_file_id}"
-                )
-            except Exception:
-                return await message.reply_text(script.LINK_EXPIRED_TXT)
-
         try:
             _, grp_id, file_id = data.split("_", 2)
             grp_id = int(grp_id)
@@ -352,30 +297,30 @@ async def start(client, message):
                 logger.error(f"❗️ Force Sub Error:\n\n{repr(e)}")
 
         user_id = m.from_user.id
-
-        # Normal episode links MUST always go through the shortener/verification
-        # flow.  Only the protected verified_* link created by the verification
-        # handler is allowed to bypass it.
-        if not verified_file_link and not await db.has_premium_access(user_id):
+        if not await db.has_premium_access(user_id):
             try:
                 grp_id = int(grp_id)
-                user_verified = await db.is_user_verified(user_id)
                 settings = await get_settings(grp_id)
-                is_second_shortener = await db.use_second_shortener(user_id, settings.get('verify_time', TWO_VERIFY_GAP)) 
-                is_third_shortener = await db.use_third_shortener(user_id, settings.get('third_verify_time', THREE_VERIFY_GAP))
-                if settings.get("is_verify", IS_VERIFY):
+                ist_timezone = pytz.timezone('Asia/Kolkata')
+                verification_valid = False
+                try:
+                    user_record = await db.get_notcopy_user(user_id)
+                    last_verified = user_record.get("last_verified")
+                    if last_verified:
+                        last_verified = last_verified.astimezone(ist_timezone)
+                        verification_valid = (datetime.now(tz=ist_timezone) - last_verified) <= timedelta(seconds=VERIFICATION_VALIDITY_SECONDS)
+                except Exception:
+                    verification_valid = False
+
+                # Verification is required only when the 20-minute window has expired.
+                if settings.get("is_verify", IS_VERIFY) and not verification_valid:
                     verify_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
                     await db.create_verify_id(user_id, verify_id)
                     temp.VERIFICATIONS[user_id] = grp_id
-                    is_allfiles = message.command[1].startswith('allfiles')
-                    await db.update_verify_id_info(
-                        user_id, verify_id,
-                        {"grp_id": grp_id, "file_id": file_id, "allfiles": is_allfiles}
-                    )
-                    verify = await get_shortlink(
-                        f"https://telegram.me/{temp.U_NAME}?start={'sendall' if is_allfiles else 'notcopy'}_{user_id}_{verify_id}",
-                        grp_id, is_second_shortener, is_third_shortener
-                    )
+                    if message.command[1].startswith('allfiles'):
+                        verify = await get_shortlink(f"https://telegram.me/{temp.U_NAME}?start=sendall_{user_id}_{verify_id}_{file_id}", grp_id, is_second_shortener, is_third_shortener)
+                    else:
+                        verify = await get_shortlink(f"https://telegram.me/{temp.U_NAME}?start=notcopy_{user_id}_{verify_id}_{file_id}", grp_id, is_second_shortener, is_third_shortener)
                     if is_third_shortener:
                         howtodownload = settings.get('tutorial_3', TUTORIAL_3)
                     else:
@@ -401,12 +346,8 @@ async def start(client, message):
                     await m.delete()
                     return
             except Exception as e:
-                # Never fall through to direct file delivery if verification
-                # setup fails. That would bypass the verification gate.
-                logger.exception("Error In Verification: %s", e)
-                return await m.reply_text(
-                    "⚠️ Verification link generate nahi ho saka. Please try again."
-                )
+                logger.error("Error In Verification: %s", e)
+                pass
 
         files_ = await file_details_task
         if data.startswith("allfiles"):
@@ -571,9 +512,9 @@ async def save_file_handler(bot, message):
     """Save file to database"""
     reply = message.reply_to_message
     if reply and reply.media:
-        msg = await message.reply("Pʀᴏᴄᴇssɪɴɢ...⏳", quote=True)
+        msg = await message.reply("Pʀᴏᴄᴇssɪɴɢ...⏳")
     else:
-        await message.reply('Rᴇᴘʟʏ ᴛᴏ ғɪʟᴇ ᴡɪᴛʜ /save ᴡʜɪᴄʜ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ sᴀᴠᴇ', quote=True)
+        await message.reply('Rᴇᴘʟʏ ᴛᴏ ғɪʟᴇ ᴡɪᴛʜ /save ᴡʜɪᴄʜ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ sᴀᴠᴇ')
         return
 
     try:
@@ -607,9 +548,9 @@ async def delete(bot, message):
     """Delete file from database"""
     reply = message.reply_to_message
     if reply and reply.media:
-        msg = await message.reply("Pʀᴏᴄᴇssɪɴɢ...⏳", quote=True)
+        msg = await message.reply("Pʀᴏᴄᴇssɪɴɢ...⏳")
     else:
-        await message.reply('Rᴇᴘʟʏ ᴛᴏ ғɪʟᴇ ᴡɪᴛʜ /delete ᴡʜɪᴄʜ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ᴅᴇʟᴇᴛᴇ', quote=True)
+        await message.reply('Rᴇᴘʟʏ ᴛᴏ ғɪʟᴇ ᴡɪᴛʜ /delete ᴡʜɪᴄʜ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ᴅᴇʟᴇᴛᴇ')
         return
 
     for file_type in ("document", "video", "audio"):
@@ -686,7 +627,6 @@ async def delete_all_index(bot, message):
                 ],
             ]
         ),
-        quote=True,
     )
 
 @Client.on_message(filters.command('settings'))
@@ -708,7 +648,7 @@ async def settings(client, message):
         await message.reply_text(
                 text="<b>ᴡʜᴇʀᴇ ᴅᴏ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ᴏᴘᴇɴ ꜱᴇᴛᴛɪɴɢꜱ ᴍᴇɴᴜ ? ⚙️</b>",
                 reply_markup=InlineKeyboardMarkup(btn),
-                disable_web_page_preview=True,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
                 parse_mode=enums.ParseMode.HTML,
                 reply_to_message_id=message.id
         )
@@ -1096,7 +1036,7 @@ async def save_caption(client, message):
     except Exception:
         return await message.reply_text("<code>ɢɪᴠᴇ ᴍᴇ ᴀ ᴄᴀᴘᴛɪᴏɴ ᴀʟᴏɴɢ ᴡɪᴛʜ ɪᴛ.\n\nᴇxᴀᴍᴘʟᴇ -\n\nꜰᴏʀ ꜰɪʟᴇ ɴᴀᴍᴇ ꜱᴇɴᴅ <code>{file_name}</code>\nꜰᴏʀ ꜰɪʟᴇ ꜱɪᴢᴇ ꜱᴇɴᴅ <code>{file_size}</code>\n\n<code>/set_caption {file_name}</code></code>")
     await save_group_settings(grp_id, 'caption', caption)
-    await message.reply_text(f"ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴄʜᴀɴɢᴇᴅ ᴄᴀᴘᴛɪᴏɴ ꜰᴏʀ {title}\n\nᴄᴀᴘᴛɪᴏɴ - {caption}", disable_web_page_preview=True)
+    await message.reply_text(f"ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴄʜᴀɴɢᴇᴅ ᴄᴀᴘᴛɪᴏɴ ꜰᴏʀ {title}\n\nᴄᴀᴘᴛɪᴏɴ - {caption}", link_preview_options=LinkPreviewOptions(is_disabled=True))
     await client.send_message(LOG_CHANNEL, f"#Set_Caption\n\nɢʀᴏᴜᴘ ɴᴀᴍᴇ : {title}\n\nɢʀᴏᴜᴘ ɪᴅ: {grp_id}\nɪɴᴠɪᴛᴇ ʟɪɴᴋ : {invite_link}\n\nᴜᴘᴅᴀᴛᴇᴅ ʙʏ : {message.from_user.username}")
 
 
@@ -1129,7 +1069,7 @@ async def set_tutorial(client, message: Message):
     await message.reply_text(
         f"<b>ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴄʜᴀɴɢᴇᴅ {tutorial_key.replace('_', ' ').title()} ꜰᴏʀ {title}</b>\n\n"
         f"ʟɪɴᴋ - {tutorial_link}",
-        disable_web_page_preview=True
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
     )
     await client.send_message(
         LOG_CHANNEL,
@@ -1171,7 +1111,7 @@ async def handle_shortner_command(c, m, shortner_key, api_key, log_prefix, fallb
             f"\n\nꜱɪᴛᴇ - {URL}\n\nᴀᴘɪ - `{API}`"
             f"\n\nɢʀᴏᴜᴘ - {grp_link}\nɢʀᴏᴜᴘ ɪᴅ - `{grp_id}`"
         )
-        await c.send_message(LOG_CHANNEL, log_message, disable_web_page_preview=True)
+        await c.send_message(LOG_CHANNEL, log_message, link_preview_options=LinkPreviewOptions(is_disabled=True))
     except Exception as e:
         await save_group_settings(grp_id, shortner_key, fallback_url)
         await save_group_settings(grp_id, api_key, fallback_api)
@@ -1224,13 +1164,13 @@ async def set_log(client, message):
     except Exception as e:
         return await message.reply_text(f'<b><u>😐 ᴍᴀᴋᴇ sᴜʀᴇ ᴛʜɪs ʙᴏᴛ ᴀᴅᴍɪɴ ɪɴ ᴛʜᴀᴛ ᴄʜᴀɴɴᴇʟ...</u>\n\n💔 ᴇʀʀᴏʀ - <code>{e}</code></b>')
     await save_group_settings(grp_id, 'log', log)
-    await message.reply_text(f"<b>✅ sᴜᴄᴄᴇssꜰᴜʟʟʏ sᴇᴛ ʏᴏᴜʀ ʟᴏɢ ᴄʜᴀɴɴᴇʟ ꜰᴏʀ {title}\n\nɪᴅ - `{log}`</b>", disable_web_page_preview=True)
+    await message.reply_text(f"<b>✅ sᴜᴄᴄᴇssꜰᴜʟʟʏ sᴇᴛ ʏᴏᴜʀ ʟᴏɢ ᴄʜᴀɴɴᴇʟ ꜰᴏʀ {title}\n\nɪᴅ - `{log}`</b>", link_preview_options=LinkPreviewOptions(is_disabled=True))
     user_id = message.from_user.id
     user_info = f"@{message.from_user.username}" if message.from_user.username else f"{message.from_user.mention}"
     link = (await client.get_chat(message.chat.id)).invite_link
     grp_link = f"[{message.chat.title}]({link})"
     log_message = f"#New_Log_Channel_Set\n\nɴᴀᴍᴇ - {user_info}\n\nɪᴅ - `{user_id}`\n\nʟᴏɢ ᴄʜᴀɴɴᴇʟ ɪᴅ - `{log}`\nɢʀᴏᴜᴘ ʟɪɴᴋ - `{grp_link}`\n\nɢʀᴏᴜᴘ ɪᴅ : `{grp_id}`"
-    await client.send_message(LOG_CHANNEL, log_message, disable_web_page_preview=True) 
+    await client.send_message(LOG_CHANNEL, log_message, link_preview_options=LinkPreviewOptions(is_disabled=True)) 
 
 
 @Client.on_message(filters.command('set_time'))
@@ -1286,7 +1226,7 @@ async def all_settings(client, message):
         [InlineKeyboardButton("♻️ ʀᴇꜱᴇᴛ ꜱᴇᴛᴛɪɴɢꜱ", callback_data=f"reset_group_{grp_id}")],
         [InlineKeyboardButton("🚫 ᴄʟᴏꜱᴇ", callback_data="close_data", style=enums.ButtonStyle.DANGER)]
     ]
-    dlt = await message.reply_text(text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
+    dlt = await message.reply_text(text, reply_markup=InlineKeyboardMarkup(btn), link_preview_options=LinkPreviewOptions(is_disabled=True))
     await asyncio.sleep(300)
     await dlt.delete()
 
@@ -1330,7 +1270,7 @@ async def reset_group_callback(client, callback_query):
         [InlineKeyboardButton("♻️ ʀᴇꜱᴇᴛ ꜱᴇᴛᴛɪɴɢꜱ", callback_data=f"reset_group_{grp_id}")],
         [InlineKeyboardButton("🚫 ᴄʟᴏꜱᴇ", callback_data="close_data", style=enums.ButtonStyle.DANGER)]
     ]
-    await callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), disable_web_page_preview=True)
+    await callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), link_preview_options=LinkPreviewOptions(is_disabled=True))
 
 @Client.on_message(filters.command("verify") & filters.user(ADMINS))
 async def verify(bot, message):
@@ -1410,14 +1350,12 @@ async def reset_all_settings(client, message):
     try:
         reset_count = await db.dreamx_reset_settings()
         await message.reply_text(
-            f"<b>ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴅᴇʟᴇᴛᴇᴅ ꜱᴇᴛᴛɪɴɢꜱ ꜰᴏʀ  <code>{reset_count}</code> ɢʀᴏᴜᴘꜱ. ᴅᴇꜰᴀᴜʟᴛ ᴠᴀʟᴜᴇꜱ ᴡɪʟʟ ʙᴇ ᴜꜱᴇᴅ ✅</b>",
-            quote=True
+            f"<b>ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴅᴇʟᴇᴛᴇᴅ ꜱᴇᴛᴛɪɴɢꜱ ꜰᴏʀ  <code>{reset_count}</code> ɢʀᴏᴜᴘꜱ. ᴅᴇꜰᴀᴜʟᴛ ᴠᴀʟᴜᴇꜱ ᴡɪʟʟ ʙᴇ ᴜꜱᴇᴅ ✅</b>"
         )
     except Exception as e:
         logger.error("reset_all_settings: %s", e)
         await message.reply_text(
-            "<b>🚫 An error occurred while resetting group settings.\nPlease try again later.</b>",
-            quote=True
+            "<b>🚫 An error occurred while resetting group settings.\nPlease try again later.</b>"
         )
 
 @Client.on_message(filters.command("trial_reset"))
@@ -1503,7 +1441,7 @@ async def remove_fsub(client, message):
 
 @Client.on_message(filters.command('clean_groups') & filters.user(ADMINS))
 async def clean_groups_handler(client, message):
-    msg = await message.reply('Cleaning groups... This may take a while.', quote=True)
+    msg = await message.reply('Cleaning groups... This may take a while.')
     deleted_count = 0
     total_groups = await db.total_chat_count()
     processed = 0
