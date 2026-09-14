@@ -45,6 +45,7 @@ async def start(client, message):
                 pass
         m = message
         verified_file_link = False
+        data = None
         if len(m.command) == 2 and m.command[1].startswith(('notcopy', 'sendall')):
             # Verification callback format: notcopy_<user_id>_<verify_id>
             # The actual group/file payload is stored in MongoDB.
@@ -276,7 +277,8 @@ async def start(client, message):
             await auto_filter(client, message)
             raise StopPropagation
 
-        data = message.command[1]
+        if data is None:
+            data = message.command[1]
 
         # A verified_* link is created ONLY by the successful verification
         # handler above.  Keep verified_file_link=True so the normal flow
