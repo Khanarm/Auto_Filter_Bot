@@ -303,7 +303,7 @@ async def start(client, message):
                 settings = await get_settings(grp_id)
                 is_second_shortener = await db.use_second_shortener(user_id, settings.get('verify_time', TWO_VERIFY_GAP)) 
                 is_third_shortener = await db.use_third_shortener(user_id, settings.get('third_verify_time', THREE_VERIFY_GAP))
-                if (not user_verified or is_second_shortener or is_third_shortener):
+                if settings.get("is_verify", IS_VERIFY) and (not user_verified or is_second_shortener or is_third_shortener):
                     verify_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
                     await db.create_verify_id(user_id, verify_id)
                     temp.VERIFICATIONS[user_id] = grp_id
@@ -336,9 +336,15 @@ async def start(client, message):
                     await m.delete()
                     return
             except Exception as e:
+                # Never fall through to file delivery when verification fails.
+                # Previously this exception handler used `pass`, which allowed the
+                # normal file-delivery code below to run and bypass verification.
                 logger.exception("Error In Verification: %s", e)
                 try:
-                    await m.reply_text("⚠️ Verification setup error. Please try again later.")
+                    await m.reply_text(
+                        "⚠️ <b>Verification system error.</b>\n\nPlease try again in a moment.",
+                        parse_mode=enums.ParseMode.HTML
+                    )
                 except Exception:
                     pass
                 return
