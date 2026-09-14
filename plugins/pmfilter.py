@@ -1,26 +1,5 @@
 import logging
-from utils import (
-    get_random_mix_id,
-    get_size,
-    is_subscribed,
-    is_req_subscribed,
-    group_setting_buttons,
-    get_poster,
-    get_posterx,
-    temp,
-    get_settings,
-    save_group_settings,
-    get_cap,
-    imdb,
-    is_check_admin,
-    extract_request_content,
-    log_error,
-    clean_filename,
-    generate_season_variations,
-    clean_search_text,
-    get_settings_text,
-    get_shortlink
-)
+from utils import get_random_mix_id, get_size, is_subscribed, is_req_subscribed, group_setting_buttons, get_poster, get_posterx, temp, get_settings, save_group_settings, get_cap, imdb, is_check_admin, extract_request_content, log_error, clean_filename, generate_season_variations, clean_search_text, get_settings_text
 from rapidfuzz import process
 from dreamxbotz.util.file_properties import get_name, get_hash
 from urllib.parse import quote_plus
@@ -29,13 +8,13 @@ from database.ia_filterdb import Media, Media2, get_search_results, get_bad_file
 from database.config_db import mdb
 from pyrogram.errors import MessageIdInvalid, UserIsBlocked, MessageNotModified, PeerIdInvalid, MessageDeleteForbidden
 from pyrogram import Client, filters, enums
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
+from pyrogram.types import LinkPreviewOptions, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from info import (
     ADMINS, AUTH_CHANNELS, AUTH_REQ_CHANNELS, BIN_CHANNEL, DELETE_TIME,
     EMOJI_MODE, GRP_LNK, LANDSCAPE_POSTER, LANGUAGES, LOG_CHANNEL, MAX_B_TN, MSG_ALRT,
     MULTIPLE_DB, NO_RESULTS_MSG, OWNER_LNK, OWNER_UPI_ID, PICS, PICS_URL, QR_CODE, QUALITIES,
     REACTIONS, REQST_CHANNEL, SEASONS, STAR_PREMIUM_PLANS, SUBSCRIPTION, SUPPORT_CHAT_ID,
-    TMDB_ON_SEARCH, TMDB_POSTER, ULTRA_FAST_MODE, UPDATE_CHNL_LNK, URL, TWO_VERIFY_GAP, THREE_VERIFY_GAP
+    TMDB_ON_SEARCH, TMDB_POSTER, ULTRA_FAST_MODE, UPDATE_CHNL_LNK, URL
 )
 from Script import script
 from pyrogram.errors.exceptions.bad_request_400 import MediaEmpty, PhotoInvalidDimensions, WebpageMediaEmpty
@@ -45,7 +24,6 @@ import asyncio
 import re
 import math
 import random
-import string
 import pytz
 from datetime import datetime, timedelta
 lock = asyncio.Lock()
@@ -354,12 +332,12 @@ async def next_page(bot, query):
                         logger.exception(e)
                 else:
                     try:
-                        await query.message.edit_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
+                        await query.message.edit_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), link_preview_options=LinkPreviewOptions(is_disabled=True), parse_mode=enums.ParseMode.HTML)
                     except (MessageNotModified, MessageIdInvalid):
                         pass
             else:
                 cap = await get_cap(settings, remaining_seconds, files, query, total, dreamx_title, offset+1)
-                await query.message.edit_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
+                await query.message.edit_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), link_preview_options=LinkPreviewOptions(is_disabled=True), parse_mode=enums.ParseMode.HTML)
         except (MessageNotModified, MessageIdInvalid):
             pass
         except Exception as e:
@@ -547,7 +525,7 @@ async def filter_qualities_cb_handler(client: Client, query: CallbackQuery):
         dreamx_title = clean_search_text(search)
         cap = await get_cap(settings, remaining_seconds, files, query, total_results, dreamx_title, offset=1)
         try:
-            await query.message.edit_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
+            await query.message.edit_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), link_preview_options=LinkPreviewOptions(is_disabled=True), parse_mode=enums.ParseMode.HTML)
         except (MessageNotModified, MessageIdInvalid):
             pass
     else:
@@ -701,7 +679,7 @@ async def filter_languages_cb_handler(client: Client, query: CallbackQuery):
         dreamx_title = clean_search_text(search)
         cap = await get_cap(settings, remaining_seconds, files, query, total_results, dreamx_title, offset=1)
         try:
-            await query.message.edit_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
+            await query.message.edit_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), link_preview_options=LinkPreviewOptions(is_disabled=True), parse_mode=enums.ParseMode.HTML)
         except (MessageNotModified, MessageIdInvalid):
             pass
     else:
@@ -840,7 +818,7 @@ async def filter_seasons_cb_handler(client: Client, query: CallbackQuery):
             await query.message.edit_text(
                 text=cap,
                 reply_markup=InlineKeyboardMarkup(btn),
-                disable_web_page_preview=True,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
         except (MessageNotModified, MessageIdInvalid):
             pass
@@ -875,61 +853,29 @@ async def cb_handler(client: Client, query: CallbackQuery):
 
     elif query.data == "pages":
         await query.answer("ᴛʜɪs ɪs ᴘᴀɢᴇs ʙᴜᴛᴛᴏɴ 😅")
-    
-    elif query.data.startswith("file#"):
-        # File result links must open the bot first. Verification is handled
-        # by plugins.commands /start, where the VERIFY button receives the
-        # actual shortener URL.
-        try:
-            _, file_id = query.data.split("#", 1)
-            grp_id = temp.SHORT.get(query.from_user.id, query.message.chat.id)
-            start_url = f"https://t.me/{temp.U_NAME}?start=file_{grp_id}_{file_id}"
-            await query.answer(url=start_url)
-            return
-        except Exception as e:
-            logger.exception("FILE callback error: %s", e)
-            await query.answer("⚠️ Link generate nahi ho saka. Please try again.", show_alert=True)
-            return
+
+
+
+    if query.data.startswith("file"):
+        ident, file_id = query.data.split("#")
+        user = query.message.reply_to_message.from_user.id if query.message.reply_to_message else query.from_user.id
+        if int(user) != 0 and query.from_user.id != int(user):
+            return await query.answer(script.ALRT_TXT.format(query.from_user.first_name), show_alert=True)
+        await query.answer(url=f"https://t.me/{temp.U_NAME}?start=file_{query.message.chat.id}_{file_id}")
 
     elif query.data.startswith("sendfiles"):
         ident, key = query.data.split("#")
         settings = await get_settings(query.message.chat.id)
-
-        original_url = (
-            f"https://telegram.me/{temp.U_NAME}"
-            f"?start=allfiles_{query.message.chat.id}_{key}"
-        )
-
         try:
-            short_url = await get_shortlink(
-                original_url,
-                query.message.chat.id
-            )
-        except Exception as e:
-            logger.exception(f"SEND ALL shortener error: {e}")
-            short_url = original_url
-
-        try:
-            await query.answer(url=short_url)
+            await query.answer(url=f"https://telegram.me/{temp.U_NAME}?start=allfiles_{query.message.chat.id}_{key}")
             return
         except UserIsBlocked:
-            await query.answer(
-                "Uɴʙʟᴏᴄᴋ ᴛʜᴇ ʙᴏᴛ ᴍᴀʜɴ !",
-                show_alert=True
-            )
+            await query.answer('Uɴʙʟᴏᴄᴋ ᴛʜᴇ ʙᴏᴛ ᴍᴀʜɴ !', show_alert=True)
         except PeerIdInvalid:
-            fallback_url = (
-                f"https://t.me/{temp.U_NAME}"
-                f"?start=sendfiles3_{key}"
-            )
-            await query.answer(url=fallback_url)
+            await query.answer(url=f"https://telegram.me/{temp.U_NAME}?start=sendfiles3_{key}")
         except Exception as e:
-            logger.exception(f"SEND ALL callback error: {e}")
-            fallback_url = (
-                f"https://t.me/{temp.U_NAME}"
-                f"?start=sendfiles4_{key}"
-            )
-            await query.answer(url=fallback_url)
+            logger.exception(e)
+            await query.answer(url=f"https://telegram.me/{temp.U_NAME}?start=sendfiles4_{key}")
 
 
 
@@ -1022,7 +968,7 @@ async def cb_handler(client: Client, query: CallbackQuery):
             reply_markup = InlineKeyboardMarkup(btn)
             await query.message.edit_text(
                 text=await get_settings_text(grp_id, title),
-                disable_web_page_preview=True,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
                 parse_mode=enums.ParseMode.HTML
             )
             await query.message.edit_reply_markup(reply_markup)
@@ -1054,7 +1000,7 @@ async def cb_handler(client: Client, query: CallbackQuery):
                 chat_id=userid,
                 text=await get_settings_text(grp_id, title),
                 reply_markup=reply_markup,
-                disable_web_page_preview=True,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
                 parse_mode=enums.ParseMode.HTML,
                 reply_to_message_id=query.message.id
             )
@@ -1182,8 +1128,7 @@ async def cb_handler(client: Client, query: CallbackQuery):
             await asyncio.sleep(1)
             await log_msg.reply_text(
                 text=f"•• ʟɪɴᴋ ɢᴇɴᴇʀᴀᴛᴇᴅ ꜰᴏʀ ɪᴅ #{user_id} \n•• ᴜꜱᴇʀɴᴀᴍᴇ : {username} \n\n•• ᖴᎥᒪᗴ Nᗩᗰᗴ : {fileName}",
-                quote=True,
-                disable_web_page_preview=True,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 ꜰᴀꜱᴛ ᴅᴏᴡɴʟᴏᴀᴅ 🚀", url=dreamx_download),  # we download Link
                                                     InlineKeyboardButton('🖥️ ᴡᴀᴛᴄʜ ᴏɴʟɪɴᴇ 🖥️', url=dreamx_stream)]])  # web stream Link
             )
@@ -1312,7 +1257,7 @@ async def cb_handler(client: Client, query: CallbackQuery):
         await query.message.edit_text(
             text=script.ABOUT_TXT.format(temp.U_NAME, temp.B_NAME, OWNER_LNK),
             reply_markup=reply_markup,
-            disable_web_page_preview=True,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
             parse_mode=enums.ParseMode.HTML
         )
 
@@ -1508,19 +1453,6 @@ async def cb_handler(client: Client, query: CallbackQuery):
             reply_markup = InlineKeyboardMarkup(btn)
             await query.message.edit_reply_markup(reply_markup)
     await query.answer(MSG_ALRT)
-
-
-async def _episode_shortlink(user_id, grp_id, file_id, settings):
-    """Return a Telegram deep-link only.
-
-    The file link must start the bot first; the /start handler is responsible
-    for showing the verification screen. The verification/shortener URL is
-    created there and placed only on the VERIFY button.
-    """
-    return (
-        f"https://t.me/{temp.U_NAME}"
-        f"?start=file_{grp_id}_{file_id}"
-    )
 
 
 async def auto_filter(client, msg, spoll=False):
@@ -1731,8 +1663,7 @@ async def auto_filter(client, msg, spoll=False):
             if not settings.get('button'):
                 cap += "\n\n<b><u>Your Requested Files Are Here</u></b>\n\n"
                 for idx, file in enumerate(files, start=1):
-                    short_url = await _episode_shortlink(message.from_user.id, message.chat.id, file.file_id, settings)
-                    cap += f"<b>\n{idx}. <a href='{short_url}'>[{get_size(file.file_size)}] {clean_filename(file.file_name)}\n</a></b>"
+                    cap += f"<b>\n{idx}. <a href='https://telegram.me/{temp.U_NAME}?start=file_{message.chat.id}_{file.file_id}'>[{get_size(file.file_size)}] {clean_filename(file.file_name)}\n</a></b>"
         else:
             temp.IMDB_CAP[message.from_user.id] = None
             if ULTRA_FAST_MODE:
@@ -1741,8 +1672,7 @@ async def auto_filter(client, msg, spoll=False):
                 else:
                     cap = f"<b>🏷 ᴛɪᴛʟᴇ : <code>{search}</code>\n⏰ ʀᴇsᴜʟᴛ ɪɴ : <code>{remaining_seconds} Sᴇᴄᴏɴᴅs</code>\n\n📝 ʀᴇǫᴜᴇsᴛᴇᴅ ʙʏ : {message.from_user.mention}\n⚜️ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : ⚡ {message.chat.title or temp.B_LINK or 'ᴅʀᴇᴀᴍxʙᴏᴛᴢ'} \n\n<u>Your Requested Files Are Here</u> \n\n</b>"
                     for idx, file in enumerate(files, start=1):
-                        short_url = await _episode_shortlink(message.from_user.id, message.chat.id, file.file_id, settings)
-                        cap += f"<b>\n{idx}. <a href='{short_url}'>[{get_size(file.file_size)}] {clean_filename(file.file_name)}\n</a></b>"
+                        cap += f"<b>\n{idx}. <a href='https://telegram.me/{temp.U_NAME}?start=file_{message.chat.id}_{file.file_id}'>[{get_size(file.file_size)}] {clean_filename(file.file_name)}\n</a></b>"
             else:
                 if settings.get('button'):
                     cap = f"<b>🏷 ᴛɪᴛʟᴇ : <code>{search}</code>\n🧱 ᴛᴏᴛᴀʟ ꜰɪʟᴇꜱ : <code>{total_results}</code>\n⏰ ʀᴇsᴜʟᴛ ɪɴ : <code>{remaining_seconds} Sᴇᴄᴏɴᴅs</code>\n\n📝 ʀᴇǫᴜᴇsᴛᴇᴅ ʙʏ : {message.from_user.mention}\n⚜️ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : ⚡ {message.chat.title or temp.B_LINK or 'ᴅʀᴇᴀᴍxʙᴏᴛᴢ'} \n\n<u>Your Requested Files Are Here</u> \n\n</b>"
@@ -1750,8 +1680,7 @@ async def auto_filter(client, msg, spoll=False):
                     cap = f"<b>🏷 ᴛɪᴛʟᴇ : <code>{search}</code>\n🧱 ᴛᴏᴛᴀʟ ꜰɪʟᴇꜱ : <code>{total_results}</code>\n⏰ ʀᴇsᴜʟᴛ ɪɴ : <code>{remaining_seconds} Sᴇᴄᴏɴᴅs</code>\n\n📝 ʀᴇǫᴜᴇsᴛᴇᴅ ʙʏ : {message.from_user.mention}\n⚜️ ᴘᴏᴡᴇʀᴇᴅ ʙʏ : ⚡ {message.chat.title or temp.B_LINK or 'ᴅʀᴇᴀᴍxʙᴏᴛᴢ'} \n\n<u>Your Requested Files Are Here</u> \n\n</b>"
 
                     for idx, file in enumerate(files, start=1):
-                        short_url = await _episode_shortlink(message.from_user.id, message.chat.id, file.file_id, settings)
-                        cap += f"<b>\n{idx}. <a href='{short_url}'>[{get_size(file.file_size)}] {clean_filename(file.file_name)}\n</a></b>"
+                        cap += f"<b>\n{idx}. <a href='https://telegram.me/{temp.U_NAME}?start=file_{message.chat.id}_{file.file_id}'>[{get_size(file.file_size)}] {clean_filename(file.file_name)}\n</a></b>"
         sent = None
         try:
             if imdb and imdb.get('poster'):
@@ -1771,9 +1700,9 @@ async def auto_filter(client, msg, spoll=False):
                         await m.delete()
                 except Exception as e:
                     logger.exception(e)
-                    sent = await message.reply_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
+                    sent = await message.reply_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), link_preview_options=LinkPreviewOptions(is_disabled=True), parse_mode=enums.ParseMode.HTML)
             else:
-                sent = await message.reply_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
+                sent = await message.reply_text(text=cap, reply_markup=InlineKeyboardMarkup(btn), link_preview_options=LinkPreviewOptions(is_disabled=True), parse_mode=enums.ParseMode.HTML)
                 if m:
                     await m.delete()
         except Exception as e:
