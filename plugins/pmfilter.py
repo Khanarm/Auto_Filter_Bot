@@ -875,7 +875,37 @@ async def cb_handler(client: Client, query: CallbackQuery):
 
     elif query.data == "pages":
         await query.answer("ᴛʜɪs ɪs ᴘᴀɢᴇs ʙᴜᴛᴛᴏɴ 😅")
-    
+
+    elif query.data.startswith("file#"):
+        # Search result button -> bot deep-link. The actual file is NOT
+        # delivered here. /start file_<chat_id>_<file_id> will handle the
+        # verification flow and, after verification, deliver the file.
+        try:
+            _, file_id = query.data.split("#", 1)
+            if not file_id:
+                return await query.answer("ɪɴᴠᴀʟɪᴅ ғɪʟᴇ", show_alert=True)
+
+            # Prevent another user from pressing a private user's result button.
+            owner = (
+                query.message.reply_to_message.from_user.id
+                if query.message.reply_to_message and query.message.reply_to_message.from_user
+                else query.from_user.id
+            )
+            if owner and owner != query.from_user.id:
+                return await query.answer(
+                    script.ALRT_TXT.format(query.from_user.first_name),
+                    show_alert=True
+                )
+
+            deep_link = (
+                f"https://telegram.me/{temp.U_NAME}"
+                f"?start=file_{query.message.chat.id}_{file_id}"
+            )
+            await query.answer(url=deep_link)
+        except Exception as e:
+            logger.exception("FILE callback error: %s", e)
+            await query.answer("❌ ᴜɴᴀʙʟᴇ ᴛᴏ ᴏᴘᴇɴ ғɪʟᴇ", show_alert=True)
+
     elif query.data.startswith("sendfiles"):
         ident, key = query.data.split("#")
         settings = await get_settings(query.message.chat.id)
