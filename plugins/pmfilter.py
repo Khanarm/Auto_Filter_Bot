@@ -1500,6 +1500,18 @@ async def _episode_shortlink(user_id, grp_id, file_id, settings):
     try:
         verify_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
         await db.create_verify_id(user_id, verify_id)
+        # Store the actual delivery payload against the verification token.
+        # The callback only receives user_id + verify_id, so without this
+        # record the bot cannot reconstruct the requested file.
+        await db.update_verify_id_info(
+            user_id,
+            verify_id,
+            {
+                "grp_id": int(grp_id),
+                "file_id": file_id,
+                "allfiles": False,
+            }
+        )
         is_second = await db.use_second_shortener(
             user_id, settings.get('verify_time', TWO_VERIFY_GAP)
         )
