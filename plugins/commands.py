@@ -44,6 +44,10 @@ async def start(client, message):
                 asyncio.create_task(message.react(emoji="⚡️"))
                 pass
         m = message
+        # This flag must be defined before handling the verification callback.
+        # Otherwise the successful callback sets it to True, but the later
+        # initialization resets it to False and starts verification again.
+        verified_file_link = False
         if len(m.command) == 2 and m.command[1].startswith(('notcopy', 'sendall')):
             # New verification links carry the group id in the token itself.
             # This avoids relying on temp.VERIFICATIONS, which is only in-memory
@@ -263,7 +267,6 @@ async def start(client, message):
         # A verified_* link is created ONLY by the successful verification
         # handler above.  Validate its exact verification record before
         # converting it into the normal file/allfiles start payload.
-        verified_file_link = False
         if data.startswith("verified_") or data.startswith("verifiedall_"):
             try:
                 prefix, link_user, link_verify_id, link_grp_id, link_file_id = data.split("_", 4)
@@ -514,7 +517,10 @@ async def start(client, message):
         raise
     except Exception as e:
         logger.exception(f"Error In /start command - {e}")
-        pass
+        try:
+            await message.reply_text("<b>⚠️ Link process nahi ho paya. Please dobara try karein.</b>", parse_mode=enums.ParseMode.HTML)
+        except Exception:
+            pass
 
 async def stream_buttons(user_id: int, file_id: str):
     if STREAM_MODE and not PREMIUM_STREAM_MODE:
