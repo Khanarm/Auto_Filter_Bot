@@ -3,7 +3,7 @@ import re
 import os
 import random
 import string
-from info import ULTRA_FAST_MODE, MAX_LIST_ELM, BAD_WORDS, LONG_IMDB_DESCRIPTION, IS_VERIFY, MAX_B_TN, TUTORIAL, TUTORIAL_2, TUTORIAL_3, LOG_CHANNEL, TMDB_ON_SEARCH
+from info import ULTRA_FAST_MODE, MAX_LIST_ELM, BAD_WORDS, LONG_IMDB_DESCRIPTION, IS_VERIFY, MAX_B_TN, TUTORIAL, TUTORIAL_2, TUTORIAL_3, LOG_CHANNEL, TMDB_ON_SEARCH, SHORTENER_API, SHORTENER_WEBSITE, SHORTENER_API2, SHORTENER_WEBSITE2, SHORTENER_API3, SHORTENER_WEBSITE3
 from imdbkit import IMDBKit # pyrefly: ignore 
 import asyncio
 from pyrogram.types import Message, InlineKeyboardButton
@@ -514,20 +514,63 @@ async def search_gagala(text):
     return [title.get_text() for title in titles if title.get_text().strip()]
 
 async def get_shortlink(link, grp_id, is_second_shortener=False, is_third_shortener=False):
+    """Create a valid verification URL.
+
+    The user's self-hosted Railway shortener exposes a normal REST API at
+    /api/v1/shorten.  Shortzy is designed for AdLinkFly-style providers and
+    can return an unusable/empty URL for a custom service, which then causes
+    Telegram BUTTON_URL_INVALID.  Use the REST API directly for the custom
+    shortener, while keeping Shortzy support for other providers.
+    """
     settings = await get_settings(grp_id)
-    if is_third_shortener:             
-        api, site = settings['api_three'], settings['shortner_three']
+
+    if is_third_shortener:
+        api = settings.get('api_three') or SHORTENER_API3
+        site = settings.get('shortner_three') or SHORTENER_WEBSITE3
+    elif is_second_shortener:
+        api = settings.get('api_two') or SHORTENER_API2
+        site = settings.get('shortner_two') or SHORTENER_WEBSITE2
     else:
-        if is_second_shortener:
-            api, site = settings['api_two'], settings['shortner_two']
-        else:
-            api, site = settings['api'], settings['shortner']
-    shortzy = Shortzy(api, site)
+        api = settings.get('api') or SHORTENER_API
+        site = settings.get('shortner') or SHORTENER_WEBSITE
+
+    api = str(api or '').strip()
+    site = str(site or '').strip().rstrip('/')
+    if not api or not site:
+        raise ValueError('Shortener API/site is not configured')
+
+    # Accept either https://domain or just domain in settings.
+    base = site if site.startswith(('http://', 'https://')) else f'https://{site}'
+    host = base.lower()
+
+    # Direct integration for the user's self-hosted aShort service.
+    if 'url-shortnar-ashrot-production.up.railway.app' in host:
+        endpoint = f'{base}/api/v1/shorten'
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                endpoint,
+                json={'url': str(link)},
+                headers={'X-API-Key': api},
+            ) as response:
+                data = await response.json(content_type=None)
+                if response.status != 200 or not data.get('success'):
+                    raise RuntimeError(f'Shortener API failed: {data}')
+                short_link = str(data.get('short_url') or '').strip()
+                if not re.match(r'^https?://[^\s]+$', short_link):
+                    raise ValueError(f'Shortener returned invalid URL: {short_link!r}')
+                return short_link
+
+    # Existing Shortzy providers.
+    shortzy = Shortzy(api, site.replace('https://', '').replace('http://', ''))
     try:
-        link = await shortzy.convert(link)
+        short_link = await shortzy.convert(link)
     except Exception:
-        link = await shortzy.get_quick_link(link)
-    return link
+        short_link = await shortzy.get_quick_link(link)
+    short_link = str(short_link or '').strip()
+    if not re.match(r'^https?://[^\s]+$', short_link):
+        raise ValueError(f'Shortener returned invalid URL: {short_link!r}')
+    return short_link
 
 async def get_settings(group_id):
     group_id = int(group_id)
