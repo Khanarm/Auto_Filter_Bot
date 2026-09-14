@@ -875,36 +875,21 @@ async def cb_handler(client: Client, query: CallbackQuery):
 
     elif query.data == "pages":
         await query.answer("ᴛʜɪs ɪs ᴘᴀɢᴇs ʙᴜᴛᴛᴏɴ 😅")
-
+    
     elif query.data.startswith("file#"):
-        # Search result button -> bot deep-link. The actual file is NOT
-        # delivered here. /start file_<chat_id>_<file_id> will handle the
-        # verification flow and, after verification, deliver the file.
+        # File result links must open the bot first. Verification is handled
+        # by plugins.commands /start, where the VERIFY button receives the
+        # actual shortener URL.
         try:
             _, file_id = query.data.split("#", 1)
-            if not file_id:
-                return await query.answer("ɪɴᴠᴀʟɪᴅ ғɪʟᴇ", show_alert=True)
-
-            # Prevent another user from pressing a private user's result button.
-            owner = (
-                query.message.reply_to_message.from_user.id
-                if query.message.reply_to_message and query.message.reply_to_message.from_user
-                else query.from_user.id
-            )
-            if owner and owner != query.from_user.id:
-                return await query.answer(
-                    script.ALRT_TXT.format(query.from_user.first_name),
-                    show_alert=True
-                )
-
-            deep_link = (
-                f"https://telegram.me/{temp.U_NAME}"
-                f"?start=file_{query.message.chat.id}_{file_id}"
-            )
-            await query.answer(url=deep_link)
+            grp_id = temp.SHORT.get(query.from_user.id, query.message.chat.id)
+            start_url = f"https://t.me/{temp.U_NAME}?start=file_{grp_id}_{file_id}"
+            await query.answer(url=start_url)
+            return
         except Exception as e:
             logger.exception("FILE callback error: %s", e)
-            await query.answer("❌ ᴜɴᴀʙʟᴇ ᴛᴏ ᴏᴘᴇɴ ғɪʟᴇ", show_alert=True)
+            await query.answer("⚠️ Link generate nahi ho saka. Please try again.", show_alert=True)
+            return
 
     elif query.data.startswith("sendfiles"):
         ident, key = query.data.split("#")
@@ -1526,21 +1511,17 @@ async def cb_handler(client: Client, query: CallbackQuery):
 
 
 async def _episode_shortlink(user_id, grp_id, file_id, settings):
-    """Return a bot deep-link for a search-result file.
+    """Return a Telegram deep-link only.
 
-    IMPORTANT: the movie/file result itself must NOT open the shortener.
-    Tapping the result first starts the bot with file_<grp_id>_<file_id>.
-    The /start handler then shows the verification message, and the
-    verification button inside that message contains the shortener URL.
+    The file link must start the bot first; the /start handler is responsible
+    for showing the verification screen. The verification/shortener URL is
+    created there and placed only on the VERIFY button.
     """
-    try:
-        return (
-            f"https://telegram.me/{temp.U_NAME}"
-            f"?start=file_{int(grp_id)}_{file_id}"
-        )
-    except Exception as e:
-        logger.exception("Episode deep-link error: %s", e)
-        return f"https://telegram.me/{temp.U_NAME}?start=file_{grp_id}_{file_id}"
+    return (
+        f"https://t.me/{temp.U_NAME}"
+        f"?start=file_{grp_id}_{file_id}"
+    )
+
 
 async def auto_filter(client, msg, spoll=False):
     """
