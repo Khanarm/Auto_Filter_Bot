@@ -1506,9 +1506,20 @@ async def _episode_shortlink(user_id, grp_id, file_id, settings):
         is_third = await db.use_third_shortener(
             user_id, settings.get('third_verify_time', THREE_VERIFY_GAP)
         )
+        # Telegram's /start payload is limited in length. Store the actual
+        # group/file payload in the verification record and pass only a short
+        # per-request token through the shortener.
+        await db.update_verify_id_info(
+            user_id, verify_id,
+            {
+                "grp_id": grp_id,
+                "file_id": file_id,
+                "allfiles": False
+            }
+        )
         original_url = (
             f"https://telegram.me/{temp.U_NAME}"
-            f"?start=notcopy_{user_id}_{verify_id}_{grp_id}_{file_id}"
+            f"?start=notcopy_{user_id}_{verify_id}"
         )
         short_url = await get_shortlink(
             original_url, grp_id, is_second, is_third
