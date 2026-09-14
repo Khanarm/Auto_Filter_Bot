@@ -281,7 +281,6 @@ async def start(client, message):
         # A verified_* link is created ONLY by the successful verification
         # handler above.  Validate its exact verification record before
         # converting it into the normal file/allfiles start payload.
-        verified_file_link = False
         if data.startswith("verified_") or data.startswith("verifiedall_"):
             try:
                 prefix, link_user, link_verify_id, link_grp_id, link_file_id = data.split("_", 4)
