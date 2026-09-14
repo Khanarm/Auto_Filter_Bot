@@ -45,7 +45,6 @@ async def start(client, message):
                 pass
         m = message
         verified_file_link = False
-        data = None
         if len(m.command) == 2 and m.command[1].startswith(('notcopy', 'sendall')):
             # Verification callback format: notcopy_<user_id>_<verify_id>
             # The actual group/file payload is stored in MongoDB.
@@ -277,12 +276,12 @@ async def start(client, message):
             await auto_filter(client, message)
             raise StopPropagation
 
-        if data is None:
-            data = message.command[1]
+        data = message.command[1]
 
         # A verified_* link is created ONLY by the successful verification
-        # handler above.  Keep verified_file_link=True so the normal flow
-        # does not create a second verification link.
+        # handler above.  Validate its exact verification record before
+        # converting it into the normal file/allfiles start payload.
+        verified_file_link = False
         if data.startswith("verified_") or data.startswith("verifiedall_"):
             try:
                 prefix, link_user, link_verify_id, link_grp_id, link_file_id = data.split("_", 4)
@@ -402,8 +401,12 @@ async def start(client, message):
                     await m.delete()
                     return
             except Exception as e:
-                logger.error("Error In Verification: %s", e)
-                pass
+                # Never fall through to direct file delivery if verification
+                # setup fails. That would bypass the verification gate.
+                logger.exception("Error In Verification: %s", e)
+                return await m.reply_text(
+                    "⚠️ Verification link generate nahi ho saka. Please try again."
+                )
 
         files_ = await file_details_task
         if data.startswith("allfiles"):
