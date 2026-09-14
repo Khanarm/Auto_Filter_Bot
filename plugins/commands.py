@@ -44,28 +44,30 @@ async def start(client, message):
                 asyncio.create_task(message.react(emoji="⚡️"))
                 pass
         m = message
-        # This flag must be defined before handling the verification callback.
-        # Otherwise the successful callback sets it to True, but the later
-        # initialization resets it to False and starts verification again.
-        verified_file_link = False
         if len(m.command) == 2 and m.command[1].startswith(('notcopy', 'sendall')):
             # New verification links carry the group id in the token itself.
             # This avoids relying on temp.VERIFICATIONS, which is only in-memory
             # and can be lost/overwritten when users request multiple files.
-            parts = m.command[1].split("_", 4)
-            if len(parts) == 5:
-                _, userid, verify_id, grp_id, file_id = parts
-            else:
-                # Backward compatibility for old shortener links.
-                _, userid, verify_id, file_id = m.command[1].split("_", 3)
-                grp_id = temp.VERIFICATIONS.get(int(userid), 0)
+            # Keep Telegram's /start payload short.  The verification token
+            # contains only user_id + verify_id; the actual group/file payload
+            # is stored in MongoDB against this verify_id.
+            parts = m.command[1].split("_", 2)
+            if len(parts) != 3:
+                return await message.reply(script.LINK_EXPIRED_TXT)
 
+            _, userid, verify_id = parts
             user_id = int(userid)
-            grp_id = int(grp_id)
-            settings = await get_settings(grp_id)
             verify_id_info = await db.get_verify_id_info(user_id, verify_id)
             if not verify_id_info or verify_id_info.get("verified"):
                 return await message.reply(script.LINK_EXPIRED_TXT)
+
+            grp_id = int(verify_id_info.get("grp_id", 0))
+            file_id = verify_id_info.get("file_id")
+            is_allfiles = bool(verify_id_info.get("allfiles", False))
+            if not grp_id or not file_id:
+                return await message.reply(script.LINK_EXPIRED_TXT)
+
+            settings = await get_settings(grp_id)
 
             ist_timezone = pytz.timezone('Asia/Kolkata')
             if await db.user_verified(user_id):
@@ -105,7 +107,7 @@ async def start(client, message):
             # Mark this request as verified so the normal shortener gate is
             # skipped for this exact callback and delivery continues below.
             verified_file_link = True
-            data = f"{'allfiles' if m.command[1].startswith('sendall') else 'file'}_{grp_id}_{file_id}"
+            data = f"{'allfiles' if is_allfiles else 'file'}_{grp_id}_{file_id}"
         if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
             buttons = [[
                         InlineKeyboardButton('❤️ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ ❤️', url=f'http://t.me/{temp.U_NAME}?startgroup=true')
@@ -267,6 +269,7 @@ async def start(client, message):
         # A verified_* link is created ONLY by the successful verification
         # handler above.  Validate its exact verification record before
         # converting it into the normal file/allfiles start payload.
+        verified_file_link = False
         if data.startswith("verified_") or data.startswith("verifiedall_"):
             try:
                 prefix, link_user, link_verify_id, link_grp_id, link_file_id = data.split("_", 4)
@@ -352,18 +355,22 @@ async def start(client, message):
                     verify_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
                     await db.create_verify_id(user_id, verify_id)
                     temp.VERIFICATIONS[user_id] = grp_id
-                    # Include grp_id in the shortener callback token so the
-                    # verification callback remains tied to the exact group.
-                    if message.command[1].startswith('allfiles'):
-                        verify = await get_shortlink(
-                            f"https://telegram.me/{temp.U_NAME}?start=sendall_{user_id}_{verify_id}_{grp_id}_{file_id}",
-                            grp_id, is_second_shortener, is_third_shortener
-                        )
-                    else:
-                        verify = await get_shortlink(
-                            f"https://telegram.me/{temp.U_NAME}?start=notcopy_{user_id}_{verify_id}_{grp_id}_{file_id}",
-                            grp_id, is_second_shortener, is_third_shortener
-                        )
+                    # Store the long file payload in MongoDB and keep only a
+                    # short token in Telegram's start parameter. Telegram limits
+                    # deep-link start payloads, while Telegram file_ids can be long.
+                    is_allfiles = message.command[1].startswith('allfiles')
+                    await db.update_verify_id_info(
+                        user_id, verify_id,
+                        {
+                            "grp_id": grp_id,
+                            "file_id": file_id,
+                            "allfiles": is_allfiles
+                        }
+                    )
+                    verify = await get_shortlink(
+                        f"https://telegram.me/{temp.U_NAME}?start={'sendall' if is_allfiles else 'notcopy'}_{user_id}_{verify_id}",
+                        grp_id, is_second_shortener, is_third_shortener
+                    )
                     if is_third_shortener:
                         howtodownload = settings.get('tutorial_3', TUTORIAL_3)
                     else:
@@ -517,10 +524,7 @@ async def start(client, message):
         raise
     except Exception as e:
         logger.exception(f"Error In /start command - {e}")
-        try:
-            await message.reply_text("<b>⚠️ Link process nahi ho paya. Please dobara try karein.</b>", parse_mode=enums.ParseMode.HTML)
-        except Exception:
-            pass
+        pass
 
 async def stream_buttons(user_id: int, file_id: str):
     if STREAM_MODE and not PREMIUM_STREAM_MODE:
