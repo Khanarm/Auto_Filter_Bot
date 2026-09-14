@@ -30,7 +30,6 @@ from utils import get_settings, save_group_settings, is_subscribed, is_req_subsc
 logger = logging.getLogger(__name__)
 
 TIMEZONE = "Asia/Kolkata"
-VERIFICATION_VALIDITY_SECONDS = 20 * 60  # 20 minutes
 BATCH_FILES = {}
 REQUEST_INVITE_LINK_CACHE: dict[int, str] = {}
 
@@ -55,12 +54,12 @@ async def start(client, message):
                 return await message.reply(script.LINK_EXPIRED_TXT)  
 
             ist_timezone = pytz.timezone('Asia/Kolkata')
-            # A successful verification always starts a fresh 20-minute validity window.
-            # This intentionally uses only last_verified so second/third verification
-            # cycles cannot cause an immediate verification loop.
-            key = "last_verified"
+            if await db.user_verified(user_id):
+                key = "third_time_verified"
+            else:
+                key = "second_time_verified" if await db.is_user_verified(user_id) else "last_verified"
             current_time = datetime.now(tz=ist_timezone)
-            await db.update_notcopy_user(user_id, {key: current_time})
+            await db.update_notcopy_user(user_id, {key:current_time})
             await db.update_verify_id_info(user_id, verify_id, {"verified":True})
             if key == "third_time_verified": 
                 num = 3 
@@ -300,20 +299,11 @@ async def start(client, message):
         if not await db.has_premium_access(user_id):
             try:
                 grp_id = int(grp_id)
+                user_verified = await db.is_user_verified(user_id)
                 settings = await get_settings(grp_id)
-                ist_timezone = pytz.timezone('Asia/Kolkata')
-                verification_valid = False
-                try:
-                    user_record = await db.get_notcopy_user(user_id)
-                    last_verified = user_record.get("last_verified")
-                    if last_verified:
-                        last_verified = last_verified.astimezone(ist_timezone)
-                        verification_valid = (datetime.now(tz=ist_timezone) - last_verified) <= timedelta(seconds=VERIFICATION_VALIDITY_SECONDS)
-                except Exception:
-                    verification_valid = False
-
-                # Verification is required only when the 20-minute window has expired.
-                if settings.get("is_verify", IS_VERIFY) and not verification_valid:
+                is_second_shortener = await db.use_second_shortener(user_id, settings.get('verify_time', TWO_VERIFY_GAP)) 
+                is_third_shortener = await db.use_third_shortener(user_id, settings.get('third_verify_time', THREE_VERIFY_GAP))
+                if (not user_verified or is_second_shortener or is_third_shortener):
                     verify_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
                     await db.create_verify_id(user_id, verify_id)
                     temp.VERIFICATIONS[user_id] = grp_id
@@ -346,8 +336,12 @@ async def start(client, message):
                     await m.delete()
                     return
             except Exception as e:
-                logger.error("Error In Verification: %s", e)
-                pass
+                logger.exception("Error In Verification: %s", e)
+                try:
+                    await m.reply_text("⚠️ Verification setup error. Please try again later.")
+                except Exception:
+                    pass
+                return
 
         files_ = await file_details_task
         if data.startswith("allfiles"):
@@ -398,11 +392,7 @@ async def start(client, message):
 
         settings = await get_settings(int(grp_id))
         if not files_:
-            raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
-            sep = raw.find(b"_")
-            if sep == -1:
-                raise ValueError("Invalid encoded data")
-            file_id = raw[sep + 1:].decode("latin1")
+            file_id = decoded_file_id
             try:
                 cover = None
                 if COVERX:
@@ -649,8 +639,7 @@ async def settings(client, message):
                 text="<b>ᴡʜᴇʀᴇ ᴅᴏ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ᴏᴘᴇɴ ꜱᴇᴛᴛɪɴɢꜱ ᴍᴇɴᴜ ? ⚙️</b>",
                 reply_markup=InlineKeyboardMarkup(btn),
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
-                parse_mode=enums.ParseMode.HTML,
-                reply_to_message_id=message.id
+                parse_mode=enums.ParseMode.HTML
         )
     elif chat_type == enums.ChatType.PRIVATE:
         connected_groups = await db.get_connected_grps(user_id)
