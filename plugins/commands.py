@@ -314,13 +314,23 @@ async def start(client, message):
                     else:
                         verify = await get_shortlink(f"https://telegram.me/{temp.U_NAME}?start=notcopy_{user_id}_{verify_id}_{file_id}", grp_id, is_second_shortener, is_third_shortener)
                     if is_third_shortener:
-                        howtodownload = settings.get('tutorial_3', TUTORIAL_3)
+                        howtodownload = settings.get('tutorial_3') or TUTORIAL_3
                     else:
-                        howtodownload = settings.get('tutorial_2', TUTORIAL_2) if is_second_shortener else settings.get('tutorial', TUTORIAL)
+                        howtodownload = (settings.get('tutorial_2') or TUTORIAL_2) if is_second_shortener else (settings.get('tutorial') or TUTORIAL)
+
+                    # Telegram rejects empty/malformed button URLs.  Keep the
+                    # verification flow alive with the configured tutorial URL.
+                    if not isinstance(verify, str) or not re.match(r'^https?://[^\s]+$', verify.strip()):
+                        raise ValueError(f'Invalid verification URL returned by shortener: {verify!r}')
+                    if not isinstance(howtodownload, str) or not re.match(r'^https?://[^\s]+$', howtodownload.strip()):
+                        howtodownload = TUTORIAL
+                    if not isinstance(howtodownload, str) or not re.match(r'^https?://[^\s]+$', howtodownload.strip()):
+                        howtodownload = 'https://t.me/dreamxbotz'
+
                     buttons = [[
-                        InlineKeyboardButton(text="♻️ ᴄʟɪᴄᴋ ʜᴇʀᴇ ᴛᴏ ᴠᴇʀɪꜰʏ ♻️", url=verify)
+                        InlineKeyboardButton(text="♻️ ᴄʟɪᴄᴋ ʜᴇʀᴇ ᴛᴏ ᴠᴇʀɪꜰʏ ♻️", url=verify.strip())
                     ],[
-                        InlineKeyboardButton(text="⁉️ ʜᴏᴡ ᴛᴏ ᴠᴇʀɪꜰʏ ⁉️", url=howtodownload)
+                        InlineKeyboardButton(text="⁉️ ʜᴏᴡ ᴛᴏ ᴠᴇʀɪꜰʏ ⁉️", url=howtodownload.strip())
                     ]]
                     reply_markup=InlineKeyboardMarkup(buttons)
                     msg = script.VERIFICATION_TEXT
