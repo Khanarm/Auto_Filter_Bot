@@ -1526,48 +1526,21 @@ async def cb_handler(client: Client, query: CallbackQuery):
 
 
 async def _episode_shortlink(user_id, grp_id, file_id, settings):
-    """Create a per-user verification link for an episode result."""
+    """Return a bot deep-link for a search-result file.
+
+    IMPORTANT: the movie/file result itself must NOT open the shortener.
+    Tapping the result first starts the bot with file_<grp_id>_<file_id>.
+    The /start handler then shows the verification message, and the
+    verification button inside that message contains the shortener URL.
+    """
     try:
-        verify_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=7))
-        await db.create_verify_id(user_id, verify_id)
-        # Store the actual delivery payload against the verification token.
-        # The callback only receives user_id + verify_id, so without this
-        # record the bot cannot reconstruct the requested file.
-        await db.update_verify_id_info(
-            user_id,
-            verify_id,
-            {
-                "grp_id": int(grp_id),
-                "file_id": file_id,
-                "allfiles": False,
-            }
-        )
-        is_second = await db.use_second_shortener(
-            user_id, settings.get('verify_time', TWO_VERIFY_GAP)
-        )
-        is_third = await db.use_third_shortener(
-            user_id, settings.get('third_verify_time', THREE_VERIFY_GAP)
-        )
-        original_url = (
-            f"https://telegram.me/{temp.U_NAME}"
-            f"?start=notcopy_{user_id}_{verify_id}"
-        )
-        short_url = await get_shortlink(
-            original_url, grp_id, is_second, is_third
-        )
-        if not short_url or short_url.strip() == original_url:
-            return (
-                f"https://telegram.me/{temp.U_NAME}"
-                f"?start=file_{grp_id}_{file_id}"
-            )
-        return short_url
-    except Exception as e:
-        logger.exception("Episode shortener error: %s", e)
         return (
             f"https://telegram.me/{temp.U_NAME}"
-            f"?start=file_{grp_id}_{file_id}"
+            f"?start=file_{int(grp_id)}_{file_id}"
         )
-
+    except Exception as e:
+        logger.exception("Episode deep-link error: %s", e)
+        return f"https://telegram.me/{temp.U_NAME}?start=file_{grp_id}_{file_id}"
 
 async def auto_filter(client, msg, spoll=False):
     """
